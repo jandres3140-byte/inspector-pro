@@ -28,6 +28,48 @@ from reportlab.lib.utils import ImageReader
 # UI Config
 # -----------------------------
 st.set_page_config(page_title="jcamp029.pro", page_icon="🧾", layout="centered")
+st.markdown("""
+<style>
+
+/* Fondo general */
+.stApp {
+    background: radial-gradient(1200px 600px at 20% 0%, #0b1a33 0%, #05070d 55%, #000 100%);
+}
+
+/* ✅ Labels (ESTO ES LO IMPORTANTE) */
+label {
+    color: white !important;
+    font-weight: 500;
+}
+
+/* Textos normales */
+.stMarkdown, .stText, .stCaption {
+    color: white !important;
+}
+
+/* Inputs */
+div[data-baseweb="input"] input {
+    background-color: #05070d !important;
+    color: white !important;
+    border: 1px solid rgba(255,255,255,0.15) !important;
+}
+
+/* Textarea */
+div[data-baseweb="textarea"] textarea {
+    background-color: #05070d !important;
+    color: white !important;
+    border: 1px solid rgba(255,255,255,0.15) !important;
+}
+
+/* Selectbox */
+div[data-baseweb="select"] > div {
+    background-color: #05070d !important;
+    color: white !important;
+    border: 1px solid rgba(255,255,255,0.15) !important;
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 # CSS oscuro (alto contraste)
 st.markdown(
