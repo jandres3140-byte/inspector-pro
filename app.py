@@ -55,9 +55,6 @@ FIELD_KEYS = {
     "observaciones_raw": "observaciones_raw",
     "obs_fixed_preview": "obs_fixed_preview",
     "conclusion": "conclusion",
-    # nonces para reset REAL uploaders
-    "uploader_photos_nonce": "uploader_photos_nonce",
-    "uploader_sign_nonce": "uploader_sign_nonce",
 }
 
 
@@ -80,8 +77,6 @@ def get_defaults() -> dict:
         FIELD_KEYS["hallazgos"]: [],
         FIELD_KEYS["observaciones_raw"]: "Se observa la sala con tableros eléctricos abiertos, los demás equipos funcionando ok.",
         FIELD_KEYS["conclusion"]: "",
-        FIELD_KEYS["uploader_photos_nonce"]: 0,
-        FIELD_KEYS["uploader_sign_nonce"]: 0,
     }
 
 
@@ -92,35 +87,13 @@ def init_state():
             st.session_state[k] = v
 
 
-def _purge_uploader_keys():
-    # Borra cualquier key antigua de uploaders (reset brutal)
-    for k in list(st.session_state.keys()):
-        if k.startswith("fotos_files_") or k.startswith("firma_file_"):
-            del st.session_state[k]
-
-
 def reset_form():
+    # ✅ Reset definitivo (incluye uploaders siempre)
+    st.session_state.clear()
+    # Reinyecta defaults
     defaults = get_defaults()
-
-    # reset campos normales (menos nonces)
     for k, v in defaults.items():
-        if k not in (FIELD_KEYS["uploader_photos_nonce"], FIELD_KEYS["uploader_sign_nonce"]):
-            st.session_state[k] = v
-
-    st.session_state.pop("obs_fixed", None)
-    st.session_state.pop("obs_changes", None)
-
-    # reset brutal de uploaders
-    _purge_uploader_keys()
-
-    # cambia la key => Streamlit crea uploaders nuevos, vacíos
-    st.session_state[FIELD_KEYS["uploader_photos_nonce"]] = int(
-        st.session_state.get(FIELD_KEYS["uploader_photos_nonce"], 0)
-    ) + 1
-    st.session_state[FIELD_KEYS["uploader_sign_nonce"]] = int(
-        st.session_state.get(FIELD_KEYS["uploader_sign_nonce"], 0)
-    ) + 1
-
+        st.session_state[k] = v
     st.rerun()
 
 
@@ -298,20 +271,17 @@ def generate_conclusion_pro(
 
 
 # -----------------------------
-# PDF helpers (miniaturas iguales)
+# PDF helpers (miniaturas iguales SIN casilleros)
 # -----------------------------
-def _make_fixed_thumb_jpeg(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> Tuple[io.BytesIO, float, float]:
+def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> io.BytesIO:
     """
-    Devuelve (buffer_jpeg, width_points, height_points) con miniatura FIJA.
-    Mantiene aspecto, rellena con blanco (letterbox) para que TODAS queden iguales.
+    Miniatura con caja fija (letterbox blanco) para que TODAS queden iguales.
+    Retorna buffer JPEG listo para RLImage.
     """
-    box_w = box_w_mm * mm
-    box_h = box_h_mm * mm
-
     img = Image.open(io.BytesIO(file_bytes))
     img = ImageOps.exif_transpose(img)
 
-    # Aplana transparencia
+    # Aplanar transparencias
     if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
         bg = Image.new("RGB", img.size, (255, 255, 255))
         img = img.convert("RGBA")
@@ -320,25 +290,20 @@ def _make_fixed_thumb_jpeg(file_bytes: bytes, box_w_mm: float, box_h_mm: float) 
     else:
         img = img.convert("RGB")
 
-    # Redimensiona para encajar dentro del cuadro (sin deformar)
-    target_px_w = 900
-    ratio = target_px_w / max(1, img.size[0])
-    resized = img.resize((int(img.size[0] * ratio), int(img.size[1] * ratio)))
-
-    # Encaja dentro del cuadro final (en px aproximados)
+    # Caja final en px (simple y estable)
     box_px_w = 900
-    box_px_h = int(box_px_w * (box_h / box_w))
-    canvas_img = Image.new("RGB", (box_px_w, box_px_h), (255, 255, 255))
+    box_px_h = int(box_px_w * ((box_h_mm * mm) / (box_w_mm * mm)))
 
-    resized.thumbnail((box_px_w, box_px_h))
-    x = (box_px_w - resized.size[0]) // 2
-    y = (box_px_h - resized.size[1]) // 2
-    canvas_img.paste(resized, (x, y))
+    canvas_img = Image.new("RGB", (box_px_w, box_px_h), (255, 255, 255))
+    img.thumbnail((box_px_w, box_px_h))
+    x = (box_px_w - img.size[0]) // 2
+    y = (box_px_h - img.size[1]) // 2
+    canvas_img.paste(img, (x, y))
 
     buf = io.BytesIO()
     canvas_img.save(buf, format="JPEG", quality=85, optimize=True)
     buf.seek(0)
-    return buf, box_w, box_h
+    return buf
 
 
 def build_pdf(
@@ -353,7 +318,7 @@ def build_pdf(
     nivel_riesgo: str,
     observaciones: str,
     conclusion: str,
-    fotos: List[Tuple[str, bytes]],          # hasta 3
+    fotos: List[Tuple[str, bytes]],          # máx 3
     firma_img: Optional[Tuple[str, bytes]],
     include_firma: bool,
     include_fotos: bool,
@@ -430,51 +395,51 @@ def build_pdf(
     story.append(Paragraph(text_to_paragraph_html(conclusion), body))
     story.append(Spacer(1, 10))
 
-    # ✅ UNA sola sección: "Imágenes" (máx 3) y todas miniaturas iguales
+    # ✅ Imágenes: 1–3, todas miniatura igual, SIN casilleros vacíos, centradas
     if include_fotos and fotos:
         story.append(Paragraph("Imágenes", h2))
 
-        # miniatura fija por cuadro
         box_w_mm = 55
         box_h_mm = 35
+        imgs: List[RLImage] = []
 
-        thumbs: List[RLImage] = []
         for _, fbytes in fotos[:3]:
             try:
-                buf, w, h = _make_fixed_thumb_jpeg(fbytes, box_w_mm, box_h_mm)
-                thumbs.append(RLImage(buf, width=w, height=h))
+                buf = _thumb_jpeg_fixed_box(fbytes, box_w_mm, box_h_mm)
+                im = RLImage(buf, width=box_w_mm * mm, height=box_h_mm * mm)
+                im.hAlign = "CENTER"
+                imgs.append(im)
             except Exception:
-                # si falla una imagen, mete un placeholder simple
-                thumbs.append(Paragraph("Imagen no disponible", muted))
+                story.append(Paragraph("Una imagen no pudo ser procesada.", muted))
 
-        # completar a 3 columnas
-        while len(thumbs) < 3:
-            thumbs.append(Spacer(1, box_h_mm * mm))
-
-        grid = Table([thumbs], colWidths=[box_w_mm * mm] * 3)
-        grid.setStyle(
-            TableStyle(
-                [
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-                    ("TOPPADDING", (0, 0), (-1, -1), 2),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                    ("BOX", (0, 0), (-1, -1), 0.4, colors.lightgrey),
-                    ("INNERGRID", (0, 0), (-1, -1), 0.2, colors.lightgrey),
-                ]
+        if imgs:
+            # Tabla con EXACTAMENTE N columnas (no se dibujan bordes, no hay “casilleros”)
+            img_table = Table([imgs], colWidths=[box_w_mm * mm] * len(imgs))
+            img_table.hAlign = "CENTER"
+            img_table.setStyle(
+                TableStyle(
+                    [
+                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                        ("TOPPADDING", (0, 0), (-1, -1), 2),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                        # ❌ sin BOX / sin INNERGRID
+                    ]
+                )
             )
-        )
-        story.append(grid)
-        story.append(Spacer(1, 10))
+            story.append(img_table)
+            story.append(Spacer(1, 10))
 
-    # Firma: SOLO imagen (sin repetir nombre/cargo)
+    # ✅ Firma centrada (solo imagen, sin repetir nombre/cargo)
     if include_firma and firma_img:
         story.append(Paragraph("Firma", h2))
         try:
-            buf, w, h = _make_fixed_thumb_jpeg(firma_img[1], 55, 18)
-            story.append(RLImage(buf, width=w, height=h))
+            buf = _thumb_jpeg_fixed_box(firma_img[1], 55, 18)
+            sig = RLImage(buf, width=55 * mm, height=18 * mm)
+            sig.hAlign = "CENTER"  # 🔥 esto la centra sí o sí
+            story.append(sig)
             story.append(Spacer(1, 8))
         except Exception:
             story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
@@ -597,12 +562,9 @@ st.text_area("Conclusión (editable)", height=170, key=FIELD_KEYS["conclusion"])
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# Evidencias y firma
+# Imágenes y firma
 st.markdown("<div class='app-card'>", unsafe_allow_html=True)
 st.subheader("Imágenes y firma")
-
-photos_key = f"fotos_files_{st.session_state[FIELD_KEYS['uploader_photos_nonce']]}"
-sign_key = f"firma_file_{st.session_state[FIELD_KEYS['uploader_sign_nonce']]}"
 
 fotos_files = None
 firma_file = None
@@ -612,7 +574,6 @@ if st.session_state[FIELD_KEYS["include_photos"]]:
         "Subir imágenes (máximo 3) — todas se verán como miniatura del mismo tamaño",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
-        key=photos_key,
     )
 
 if st.session_state[FIELD_KEYS["include_signature"]]:
@@ -620,7 +581,6 @@ if st.session_state[FIELD_KEYS["include_signature"]]:
         "Firma (imagen JPG/PNG) — opcional",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=False,
-        key=sign_key,
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
