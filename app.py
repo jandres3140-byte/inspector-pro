@@ -22,7 +22,6 @@ from reportlab.pdfgen import canvas
 
 from PIL import Image, ImageOps
 from xml.sax.saxutils import escape
-
 from zoneinfo import ZoneInfo
 
 
@@ -57,7 +56,7 @@ FIELD_KEYS = {
     "observaciones_raw": "observaciones_raw",
     "obs_fixed_preview": "obs_fixed_preview",
     "conclusion": "conclusion",
-    # claves dinámicas para reset real de uploaders
+    # nonces para reset REAL uploaders
     "uploader_photos_nonce": "uploader_photos_nonce",
     "uploader_sign_nonce": "uploader_sign_nonce",
 }
@@ -94,17 +93,32 @@ def init_state():
             st.session_state[k] = v
 
 
+def _purge_uploader_keys():
+    """
+    Streamlit a veces deja keys antiguas en session_state.
+    Esto las borra a la fuerza para que el reset sea REAL.
+    """
+    purge_prefixes = ("fotos_files_", "firma_file_")
+    for k in list(st.session_state.keys()):
+        if any(k.startswith(p) for p in purge_prefixes):
+            del st.session_state[k]
+
+
 def reset_form():
     defaults = get_defaults()
+
+    # resetea campos normales
     for k, v in defaults.items():
-        # OJO: no reseteamos nonces desde defaults, los incrementamos abajo
         if k not in (FIELD_KEYS["uploader_photos_nonce"], FIELD_KEYS["uploader_sign_nonce"]):
             st.session_state[k] = v
 
     st.session_state.pop("obs_fixed", None)
     st.session_state.pop("obs_changes", None)
 
-    # ✅ Reset REAL de uploaders: cambiar el key (nonce)
+    # purge brutal de keys viejas
+    _purge_uploader_keys()
+
+    # cambia keys (nonce) => uploaders vacíos sí o sí
     st.session_state[FIELD_KEYS["uploader_photos_nonce"]] = int(
         st.session_state.get(FIELD_KEYS["uploader_photos_nonce"], 0)
     ) + 1
@@ -410,7 +424,7 @@ def build_pdf(
     story.append(Paragraph(text_to_paragraph_html(conclusion), body))
     story.append(Spacer(1, 10))
 
-    # ✅ Evidencia principal (foto 1 miniatura)
+    # Evidencia principal: solo foto 1 (miniatura)
     if include_fotos and fotos:
         story.append(Paragraph("Evidencia principal", h2))
         try:
@@ -420,33 +434,25 @@ def build_pdf(
             story.append(Paragraph("No fue posible procesar la evidencia principal.", muted))
             story.append(Spacer(1, 6))
 
-    # Firma
-    if include_firma:
+    # Firma: SOLO imagen (sin repetir nombre/cargo)
+    if include_firma and firma_img:
         story.append(Paragraph("Firma", h2))
-        if firma_img:
-            try:
-                story.append(pil_to_rl_image(firma_img[1], max_w_mm=55, max_h_mm=18))
-                story.append(Spacer(1, 4))
-            except Exception:
-                story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
-        story.append(Paragraph(f"<b>{escape(inspector)}</b> · {escape(cargo)}", body))
-        story.append(Spacer(1, 10))
+        try:
+            story.append(pil_to_rl_image(firma_img[1], max_w_mm=55, max_h_mm=18))
+            story.append(Spacer(1, 8))
+        except Exception:
+            story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
+            story.append(Spacer(1, 8))
 
-    # ✅ Evidencias (sin repetir foto 1)
-    if include_fotos and fotos:
+    # Evidencias completas: SOLO si hay más de 1 foto
+    if include_fotos and len(fotos) > 1:
         story.append(PageBreak())
         story.append(Paragraph("Evidencias fotográficas", h2))
         story.append(Paragraph("Se adjuntan imágenes asociadas a la inspección.", muted))
         story.append(Spacer(1, 10))
 
-        if len(fotos) >= 2:
-            fotos_iter = fotos[1:]   # desde la foto 2
-            start_num = 2
-        else:
-            fotos_iter = []          # si solo hay 1, ya fue “Evidencia principal”
-            start_num = 2
-
-        for idx, (fname, fbytes) in enumerate(fotos_iter, start=start_num):
+        # desde foto 2
+        for idx, (fname, fbytes) in enumerate(fotos[1:], start=2):
             story.append(Paragraph(f"Foto {idx}: {escape(fname)}", body))
             try:
                 story.append(pil_to_rl_image(fbytes, max_w_mm=170, max_h_mm=95))
@@ -575,11 +581,11 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.markdown("<div class='app-card'>", unsafe_allow_html=True)
 st.subheader("Evidencias y firma")
 
-fotos_files = None
-firma_file = None
-
 photos_key = f"fotos_files_{st.session_state[FIELD_KEYS['uploader_photos_nonce']]}"
 sign_key = f"firma_file_{st.session_state[FIELD_KEYS['uploader_sign_nonce']]}"
+
+fotos_files = None
+firma_file = None
 
 if st.session_state[FIELD_KEYS["include_photos"]]:
     fotos_files = st.file_uploader(
