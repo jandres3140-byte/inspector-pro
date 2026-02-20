@@ -28,13 +28,12 @@ from xml.sax.saxutils import escape
 # Config
 # -----------------------------
 st.set_page_config(page_title="jcamp029.pro", page_icon="🧾", layout="centered")
-
 APP_TITLE = "jcamp029.pro"
 APP_SUBTITLE = "Generador profesional de informes de inspección técnica (PDF)."
 
 
 # -----------------------------
-# Keys + Defaults (para reset real)
+# Keys + Defaults (reset real)
 # -----------------------------
 FIELD_KEYS = {
     "theme": "theme",
@@ -61,7 +60,6 @@ FIELD_KEYS = {
 
 
 def get_defaults() -> dict:
-    # Ojo: fecha dinámica para que al limpiar vuelva a "hoy"
     return {
         FIELD_KEYS["theme"]: "Oscuro",
         FIELD_KEYS["include_signature"]: True,
@@ -91,13 +89,6 @@ def init_state():
 
 
 def reset_form():
-    """
-    Reset REAL:
-    - Reasigna todos los keys de widgets
-    - Limpia resultados de corrección
-    - Limpia uploaders (pop)
-    - Fuerza rerun para que la UI se actualice al tiro
-    """
     defaults = get_defaults()
     for k, v in defaults.items():
         st.session_state[k] = v
@@ -105,7 +96,6 @@ def reset_form():
     st.session_state.pop("obs_fixed", None)
     st.session_state.pop("obs_changes", None)
 
-    # Uploaders: borrar key (es lo más confiable)
     st.session_state.pop(FIELD_KEYS["fotos_files"], None)
     st.session_state.pop(FIELD_KEYS["firma_file"], None)
 
@@ -119,9 +109,6 @@ init_state()
 # Helpers UI / CSS
 # -----------------------------
 def apply_theme_css(theme: str) -> None:
-    """
-    Modo oscuro con alto contraste (más agresivo) para que se vea SIEMPRE.
-    """
     if theme == "Oscuro":
         bg = "#070B14"
         fg = "#FFFFFF"
@@ -129,7 +116,6 @@ def apply_theme_css(theme: str) -> None:
         card = "#0B1220"
         border = "#263247"
         input_bg = "#070B14"
-        hint = "#EAEFFF"
     else:
         bg = "#ffffff"
         fg = "#0f172a"
@@ -137,7 +123,6 @@ def apply_theme_css(theme: str) -> None:
         card = "#ffffff"
         border = "#e2e8f0"
         input_bg = "#ffffff"
-        hint = "#0f172a"
 
     st.markdown(
         f"""
@@ -146,53 +131,34 @@ def apply_theme_css(theme: str) -> None:
             background: {bg};
             color: {fg};
         }}
-
-        /* Markdown text + labels */
-        .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown div {{
-            color: {fg} !important;
-        }}
         div[data-testid="stMarkdownContainer"] * {{
             color: {fg} !important;
         }}
-
-        /* Widget labels */
         div[data-testid="stWidgetLabel"] > label {{
             color: {fg} !important;
             font-weight: 700 !important;
         }}
-
-        /* Inputs */
         input, textarea {{
             background: {input_bg} !important;
             color: {fg} !important;
             border: 1px solid {border} !important;
             caret-color: {fg} !important;
         }}
-
-        /* Selectbox */
         div[data-baseweb="select"] > div {{
             background: {input_bg} !important;
             color: {fg} !important;
             border: 1px solid {border} !important;
         }}
-
-        /* Checkbox & radio text */
         [data-baseweb="checkbox"] span, [data-baseweb="radio"] span {{
             color: {fg} !important;
             font-weight: 600 !important;
         }}
-
-        /* File uploader text */
         [data-testid="stFileUploader"] * {{
             color: {fg} !important;
         }}
-
-        /* Buttons */
         .stButton>button {{
             border: 1px solid {border} !important;
         }}
-
-        /* Card */
         .block-container {{
             padding-top: 28px;
         }}
@@ -205,10 +171,6 @@ def apply_theme_css(theme: str) -> None:
         }}
         .muted {{
             color: {muted} !important;
-        }}
-        .hint {{
-            color: {hint} !important;
-            opacity: 0.95;
         }}
         </style>
         """,
@@ -231,7 +193,7 @@ def text_to_paragraph_html(text: str) -> str:
     return t.strip() if t.strip() else "—"
 
 
-def basic_spanish_fixes(text: str) -> Tuple[str, List[str]]:
+def basic_spanish_fixes(text: str):
     changes = []
     t = normalize_spaces(text or "")
 
@@ -264,39 +226,53 @@ def basic_spanish_fixes(text: str) -> Tuple[str, List[str]]:
 
 
 # -----------------------------
-# Conclusión breve (SIN plazo)
+# Conclusión PRO (sin repetir Observaciones / sin plazo)
 # -----------------------------
-def generate_conclusion_short(
+def generate_conclusion_pro(
     disciplina: str,
     nivel_riesgo: str,
     hallazgos: List[str],
-    observaciones: str,
+    observaciones: str,  # se usa para contexto, pero NO se repite textual
 ) -> str:
-    hall = ", ".join(hallazgos) if hallazgos else "Sin hallazgos críticos"
-    obs = normalize_spaces(observaciones)
+    hall = ", ".join(hallazgos) if hallazgos else "Sin hallazgos críticos declarados"
 
     if nivel_riesgo == "Bajo":
         riesgo = "Riesgo bajo"
-        accion = "Mantener control rutinario."
+        prioridad = "Prioridad: rutinaria"
     elif nivel_riesgo == "Medio":
         riesgo = "Riesgo medio"
-        accion = "Generar OT y corregir."
+        prioridad = "Prioridad: programada"
     else:
         riesgo = "Riesgo alto"
-        accion = "Acción inmediata y notificar."
+        prioridad = "Prioridad: inmediata"
 
-    # Breve, directo, sin “Plazo sugerido”
-    out = (
-        f"Conclusión ({disciplina}): {riesgo}.\n"
+    if disciplina == "Eléctrica":
+        soporte = (
+            "Foco técnico: condición de canalizaciones, luminarias/enchufes, integridad de tableros, señalización y control de energías (LOTO)."
+        )
+        acciones = (
+            "Acción recomendada: corregir condición insegura, asegurar fijaciones/cierres, normalizar orden/aseo del área y dejar registro OT."
+        )
+        verif = "Verificación: inspección visual final + control funcional básico según procedimiento."
+    elif disciplina == "Mecánica":
+        soporte = (
+            "Foco técnico: resguardos, fijaciones, partes móviles, ruidos/vibración y condición de seguridad operacional."
+        )
+        acciones = "Acción recomendada: asegurar condición segura, corregir desviación y registrar OT."
+        verif = "Verificación: prueba operativa controlada + checklist de seguridad."
+    else:
+        soporte = "Foco técnico: condición segura, integridad de componentes, orden/limpieza y cumplimiento del estándar."
+        acciones = "Acción recomendada: corregir desviación y registrar OT."
+        verif = "Verificación: revisión final y registro fotográfico."
+
+    conclusion = (
+        f"Conclusión ({disciplina}): {riesgo}. {prioridad}.\n"
         f"- Hallazgos: {hall}.\n"
-        f"- Acción: {accion}"
+        f"- {soporte}\n"
+        f"- {acciones}\n"
+        f"- {verif}"
     )
-
-    # Observación corta opcional (si hay)
-    if obs:
-        out += f"\n- Obs: {obs}"
-
-    return out
+    return conclusion
 
 
 # -----------------------------
@@ -320,7 +296,6 @@ def pil_to_rl_image(file_bytes: bytes, max_w_mm: float = 170, max_h_mm: float = 
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=85)
     buf.seek(0)
-
     return RLImage(buf, width=w, height=h)
 
 
@@ -354,45 +329,16 @@ def build_pdf(
     )
 
     styles = getSampleStyleSheet()
-
-    h1 = ParagraphStyle(
-        "h1_custom",
-        parent=styles["Heading1"],
-        fontSize=16,
-        leading=18,
-        spaceAfter=10,
-    )
-    h2 = ParagraphStyle(
-        "h2_custom",
-        parent=styles["Heading2"],
-        fontSize=12,
-        leading=14,
-        spaceBefore=10,
-        spaceAfter=6,
-    )
-    body = ParagraphStyle(
-        "body_custom",
-        parent=styles["BodyText"],
-        fontSize=10,
-        leading=13,
-    )
-    muted = ParagraphStyle(
-        "muted_custom",
-        parent=styles["BodyText"],
-        fontSize=9,
-        leading=12,
-        textColor=colors.grey,
-    )
+    h1 = ParagraphStyle("h1_custom", parent=styles["Heading1"], fontSize=16, leading=18, spaceAfter=10)
+    h2 = ParagraphStyle("h2_custom", parent=styles["Heading2"], fontSize=12, leading=14, spaceBefore=10, spaceAfter=6)
+    body = ParagraphStyle("body_custom", parent=styles["BodyText"], fontSize=10, leading=13)
+    muted = ParagraphStyle("muted_custom", parent=styles["BodyText"], fontSize=9, leading=12, textColor=colors.grey)
 
     def header_footer(c: canvas.Canvas, d):
         c.saveState()
         c.setFont("Helvetica", 9)
         c.setFillColor(colors.grey)
-        c.drawString(
-            18 * mm,
-            10 * mm,
-            f"{APP_TITLE} · Generado {datetime.now().strftime('%d-%m-%Y %H:%M')}",
-        )
+        c.drawString(18 * mm, 10 * mm, f"{APP_TITLE} · Generado {datetime.now().strftime('%d-%m-%Y %H:%M')}")
         c.drawRightString(A4[0] - 18 * mm, 10 * mm, f"Página {c.getPageNumber()}")
         c.restoreState()
 
@@ -433,27 +379,40 @@ def build_pdf(
     story.append(t)
     story.append(Spacer(1, 10))
 
+    # Observaciones (solo aquí, NO dentro de Conclusión)
     story.append(Paragraph("Observaciones", h2))
     story.append(Paragraph(text_to_paragraph_html(observaciones), body))
     story.append(Spacer(1, 8))
 
+    # Conclusión pro (sin repetir obs)
     story.append(Paragraph("Conclusión", h2))
     story.append(Paragraph(text_to_paragraph_html(conclusion), body))
     story.append(Spacer(1, 10))
 
+    # ✅ Evidencia principal (miniatura) ANTES de firma
+    if include_fotos and fotos:
+        story.append(Paragraph("Evidencia principal", h2))
+        try:
+            # Foto 1 como miniatura
+            story.append(pil_to_rl_image(fotos[0][1], max_w_mm=60, max_h_mm=35))
+            story.append(Spacer(1, 6))
+        except Exception:
+            story.append(Paragraph("No fue posible procesar la evidencia principal.", muted))
+            story.append(Spacer(1, 6))
+
+    # Firma (después de la miniatura)
     if include_firma:
         story.append(Paragraph("Firma", h2))
         if firma_img:
             try:
-                story.append(pil_to_rl_image(firma_img[1], max_w_mm=70, max_h_mm=25))
-                story.append(Spacer(1, 6))
-                story.append(Paragraph(f"<b>{escape(inspector)}</b> · {escape(cargo)}", body))
+                story.append(pil_to_rl_image(firma_img[1], max_w_mm=55, max_h_mm=18))  # más pequeña
+                story.append(Spacer(1, 4))
             except Exception:
                 story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
-        else:
-            story.append(Paragraph("No se adjuntó firma.", muted))
+        story.append(Paragraph(f"<b>{escape(inspector)}</b> · {escape(cargo)}", body))
         story.append(Spacer(1, 10))
 
+    # Evidencias fotográficas completas (página 2)
     if include_fotos and fotos:
         story.append(PageBreak())
         story.append(Paragraph("Evidencias fotográficas", h2))
@@ -463,7 +422,7 @@ def build_pdf(
         for idx, (fname, fbytes) in enumerate(fotos, start=1):
             story.append(Paragraph(f"Foto {idx}: {escape(fname)}", body))
             try:
-                story.append(pil_to_rl_image(fbytes))
+                story.append(pil_to_rl_image(fbytes, max_w_mm=170, max_h_mm=95))
             except Exception:
                 story.append(Paragraph("No fue posible procesar esta imagen.", muted))
             story.append(Spacer(1, 10))
@@ -475,7 +434,7 @@ def build_pdf(
 
 
 # -----------------------------
-# Callbacks seguros
+# Callbacks
 # -----------------------------
 def apply_obs_fix():
     st.session_state[FIELD_KEYS["observaciones_raw"]] = st.session_state.get(
@@ -491,11 +450,10 @@ def apply_obs_fix():
 st.markdown(f"<h1 style='margin-bottom:4px'>{APP_TITLE}</h1>", unsafe_allow_html=True)
 st.markdown(f"<p class='muted' style='margin-top:0'>{APP_SUBTITLE}</p>", unsafe_allow_html=True)
 
-# Tema
 st.radio("Tema", ["Claro", "Oscuro"], horizontal=True, key=FIELD_KEYS["theme"])
 apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
 
-# Config card
+# Config
 st.markdown("<div class='app-card'>", unsafe_allow_html=True)
 st.subheader("Configuración del informe")
 
@@ -511,7 +469,7 @@ with c4:
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# Main fields
+# Datos
 st.markdown("<div class='app-card'>", unsafe_allow_html=True)
 
 st.text_input("Fecha", key=FIELD_KEYS["fecha"])
@@ -546,11 +504,10 @@ st.multiselect(
 
 st.text_area("Observaciones técnicas", height=120, key=FIELD_KEYS["observaciones_raw"])
 
-# Corrección básica
+# Corrección
 if st.session_state[FIELD_KEYS["show_correccion"]]:
     st.markdown("<hr/>", unsafe_allow_html=True)
-    st.markdown("<p class='muted'><b>Corrección básica:</b> sugerencias simples (tú decides aplicar).</p>",
-                unsafe_allow_html=True)
+    st.markdown("<p class='muted'><b>Corrección básica:</b> sugerencias simples (tú decides aplicar).</p>", unsafe_allow_html=True)
 
     if st.button("Sugerir correcciones en Observaciones"):
         fixed, changes = basic_spanish_fixes(st.session_state[FIELD_KEYS["observaciones_raw"]])
@@ -567,28 +524,27 @@ if st.session_state[FIELD_KEYS["show_correccion"]]:
 
         st.button("Aplicar sugerencias a Observaciones", on_click=apply_obs_fix)
 
-# Conclusión (breve)
+# Conclusión
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.checkbox("Auto-actualizar conclusión", key=FIELD_KEYS["auto_conclusion"])
 
-auto_conc = generate_conclusion_short(
+auto_conc = generate_conclusion_pro(
     st.session_state[FIELD_KEYS["disciplina"]],
     st.session_state[FIELD_KEYS["nivel_riesgo"]],
     st.session_state[FIELD_KEYS["hallazgos"]],
     st.session_state[FIELD_KEYS["observaciones_raw"]],
 )
 
-# Si auto está activo, seteamos antes de crear el widget
 if st.session_state[FIELD_KEYS["auto_conclusion"]]:
     st.session_state[FIELD_KEYS["conclusion"]] = auto_conc
 elif not st.session_state.get(FIELD_KEYS["conclusion"]):
     st.session_state[FIELD_KEYS["conclusion"]] = auto_conc
 
-st.text_area("Conclusión (breve y editable)", height=140, key=FIELD_KEYS["conclusion"])
+st.text_area("Conclusión (editable)", height=170, key=FIELD_KEYS["conclusion"])
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# Evidencias + firma
+# Evidencias y firma
 st.markdown("<div class='app-card'>", unsafe_allow_html=True)
 st.subheader("Evidencias y firma")
 
@@ -613,7 +569,7 @@ if st.session_state[FIELD_KEYS["include_signature"]]:
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# Generación PDF
+# PDF
 st.markdown("<div class='app-card'>", unsafe_allow_html=True)
 st.subheader("Generación de PDF")
 
