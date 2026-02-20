@@ -56,8 +56,6 @@ FIELD_KEYS = {
     "observaciones_raw": "observaciones_raw",
     "obs_fixed_preview": "obs_fixed_preview",
     "conclusion": "conclusion",
-
-    # 🔥 clave para resetear uploaders sin pelear con Streamlit
     "uploader_nonce": "uploader_nonce",
 }
 
@@ -94,19 +92,21 @@ def init_state():
 
 
 def reset_form():
-    current_theme = st.session_state.get("theme", "Claro")
-    nonce = int(st.session_state.get("uploader_nonce", 0)) + 1
+    # Respeta el tema actual y resetea uploaders con nonce
+    current_theme = st.session_state.get(FIELD_KEYS["theme"], "Claro")
+    nonce = int(st.session_state.get(FIELD_KEYS["uploader_nonce"], 0)) + 1
 
     st.session_state.clear()
 
     defaults = get_defaults()
-    defaults["theme"] = current_theme
-    defaults["uploader_nonce"] = nonce
+    defaults[FIELD_KEYS["theme"]] = current_theme
+    defaults[FIELD_KEYS["uploader_nonce"]] = nonce
 
     for k, v in defaults.items():
         st.session_state[k] = v
 
     st.rerun()
+
 
 init_state()
 
@@ -288,7 +288,7 @@ def generate_conclusion_pro(
 
 
 # -----------------------------
-# PDF helpers (miniaturas iguales SIN casilleros)
+# PDF helpers
 # -----------------------------
 def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> io.BytesIO:
     """
@@ -306,7 +306,7 @@ def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -
     else:
         img = img.convert("RGB")
 
-    box_px_w = 900
+    box_px_w = 1200
     box_px_h = int(box_px_w * (box_h_mm / box_w_mm))
 
     canvas_img = Image.new("RGB", (box_px_w, box_px_h), (255, 255, 255))
@@ -316,7 +316,7 @@ def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -
     canvas_img.paste(img, (x, y))
 
     buf = io.BytesIO()
-    canvas_img.save(buf, format="JPEG", quality=85, optimize=True)
+    canvas_img.save(buf, format="JPEG", quality=88, optimize=True)
     buf.seek(0)
     return buf
 
@@ -410,13 +410,14 @@ def build_pdf(
     story.append(Paragraph(text_to_paragraph_html(conclusion), body))
     story.append(Spacer(1, 10))
 
+    # ✅ Imágenes grandes y visibles
     if include_fotos and fotos:
         story.append(Paragraph("Imágenes", h2))
 
         box_w_mm = 80
         box_h_mm = 50
-        imgs: List[RLImage] = []
 
+        imgs: List[RLImage] = []
         for _, fbytes in fotos[:3]:
             try:
                 buf = _thumb_jpeg_fixed_box(fbytes, box_w_mm, box_h_mm)
@@ -434,24 +435,44 @@ def build_pdf(
                     [
                         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-                        ("TOPPADDING", (0, 0), (-1, -1), 2),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
                     ]
                 )
             )
             story.append(img_table)
             story.append(Spacer(1, 10))
 
+    # ✅ Firma REAL (sin miniatura), alineada a la izquierda bajo "Firma"
     if include_firma and firma_img:
         story.append(Paragraph("Firma", h2))
         try:
-            buf = _thumb_jpeg_fixed_box(firma_img[1], 55, 18)
-            sig = RLImage(buf, width=55 * mm, height=18 * mm)
-            sig.hAlign = "CENTER"
+            img = Image.open(io.BytesIO(firma_img[1]))
+            img = ImageOps.exif_transpose(img)
+
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                img = img.convert("RGBA")
+                bg.paste(img, mask=img.split()[-1])
+                img = bg
+            else:
+                img = img.convert("RGB")
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=90, optimize=True)
+            buf.seek(0)
+
+            sig = RLImage(buf)
+            target_h = 22 * mm
+            sig.drawHeight = target_h
+            sig.drawWidth = target_h * (img.width / img.height)
+            sig.hAlign = "LEFT"
+
             story.append(sig)
             story.append(Spacer(1, 8))
+
         except Exception:
             story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
             story.append(Spacer(1, 8))
@@ -585,16 +606,16 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.markdown("<div class='app-card'>", unsafe_allow_html=True)
 st.subheader("Imágenes y firma")
 
-fotos_files = None
-firma_file = None
-
 nonce = int(st.session_state.get(FIELD_KEYS["uploader_nonce"], 0))
 photos_key = f"uploader_fotos_{nonce}"
 sign_key = f"uploader_firma_{nonce}"
 
+fotos_files = None
+firma_file = None
+
 if st.session_state[FIELD_KEYS["include_photos"]]:
     fotos_files = st.file_uploader(
-        "Subir imágenes (máximo 3) — todas se verán como miniatura del mismo tamaño",
+        "Subir imágenes (máximo 3) — en el PDF se verán grandes y centradas",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
         key=photos_key,
@@ -602,7 +623,7 @@ if st.session_state[FIELD_KEYS["include_photos"]]:
 
 if st.session_state[FIELD_KEYS["include_signature"]]:
     firma_file = st.file_uploader(
-        "Firma (imagen JPG/PNG) — opcional",
+        "Firma (imagen JPG/PNG) — en el PDF quedará a la izquierda bajo 'Firma'",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=False,
         key=sign_key,
@@ -622,27 +643,27 @@ if st.button("Generar PDF Profesional ✅"):
         for f in fotos_files[:3]:
             fotos.append((f.name, f.read()))
 
-   if include_firma and firma_img:
-    story.append(Paragraph("Firma", h2))
-    try:
-        img = Image.open(io.BytesIO(firma_img[1]))
-        img = ImageOps.exif_transpose(img)
-        img = img.convert("RGB")
+    firma_img: Optional[Tuple[str, bytes]] = None
+    if st.session_state[FIELD_KEYS["include_signature"]] and firma_file:
+        firma_img = (firma_file.name, firma_file.read())
 
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=90)
-        buf.seek(0)
-
-        sig = RLImage(buf)
-        sig.drawHeight = 25 * mm
-        sig.drawWidth = sig.drawHeight * (img.width / img.height)
-        sig.hAlign = "CENTER"
-
-        story.append(sig)
-        story.append(Spacer(1, 8))
-    except Exception:
-        story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
-        story.append(Spacer(1, 8)))
+    pdf_bytes = build_pdf(
+        titulo=st.session_state[FIELD_KEYS["titulo"]],
+        fecha=st.session_state[FIELD_KEYS["fecha"]],
+        equipo=st.session_state[FIELD_KEYS["equipo"]],
+        ubicacion=st.session_state[FIELD_KEYS["ubicacion"]],
+        inspector=st.session_state[FIELD_KEYS["inspector"]],
+        cargo=st.session_state[FIELD_KEYS["cargo"]],
+        registro_ot=st.session_state[FIELD_KEYS["registro_ot"]],
+        disciplina=st.session_state[FIELD_KEYS["disciplina"]],
+        nivel_riesgo=st.session_state[FIELD_KEYS["nivel_riesgo"]],
+        observaciones=st.session_state[FIELD_KEYS["observaciones_raw"]],
+        conclusion=st.session_state[FIELD_KEYS["conclusion"]],
+        fotos=fotos,
+        firma_img=firma_img,
+        include_firma=st.session_state[FIELD_KEYS["include_signature"]],
+        include_fotos=st.session_state[FIELD_KEYS["include_photos"]],
+    )
 
     filename = f"informe_inspeccion_{datetime.now(TZ_CL).strftime('%Y%m%d_%H%M')}.pdf"
     st.success("PDF generado 🎉")
