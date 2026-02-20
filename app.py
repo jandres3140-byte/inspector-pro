@@ -623,27 +623,27 @@ if st.button("Generar PDF Profesional ✅"):
         for f in fotos_files[:3]:
             fotos.append((f.name, f.read()))
 
-    firma_img: Optional[Tuple[str, bytes]] = None
-    if st.session_state[FIELD_KEYS["include_signature"]] and firma_file:
-        firma_img = (firma_file.name, firma_file.read())
+   if include_firma and firma_img:
+    story.append(Paragraph("Firma", h2))
+    try:
+        img = Image.open(io.BytesIO(firma_img[1]))
+        img = ImageOps.exif_transpose(img)
+        img = img.convert("RGB")
 
-    pdf_bytes = build_pdf(
-        titulo=st.session_state[FIELD_KEYS["titulo"]],
-        fecha=st.session_state[FIELD_KEYS["fecha"]],
-        equipo=st.session_state[FIELD_KEYS["equipo"]],
-        ubicacion=st.session_state[FIELD_KEYS["ubicacion"]],
-        inspector=st.session_state[FIELD_KEYS["inspector"]],
-        cargo=st.session_state[FIELD_KEYS["cargo"]],
-        registro_ot=st.session_state[FIELD_KEYS["registro_ot"]],
-        disciplina=st.session_state[FIELD_KEYS["disciplina"]],
-        nivel_riesgo=st.session_state[FIELD_KEYS["nivel_riesgo"]],
-        observaciones=st.session_state[FIELD_KEYS["observaciones_raw"]],
-        conclusion=st.session_state[FIELD_KEYS["conclusion"]],
-        fotos=fotos,
-        firma_img=firma_img,
-        include_firma=st.session_state[FIELD_KEYS["include_signature"]],
-        include_fotos=st.session_state[FIELD_KEYS["include_photos"]],
-    )
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        buf.seek(0)
+
+        sig = RLImage(buf)
+        sig.drawHeight = 25 * mm
+        sig.drawWidth = sig.drawHeight * (img.width / img.height)
+        sig.hAlign = "CENTER"
+
+        story.append(sig)
+        story.append(Spacer(1, 8))
+    except Exception:
+        story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
+        story.append(Spacer(1, 8)))
 
     filename = f"informe_inspeccion_{datetime.now(TZ_CL).strftime('%Y%m%d_%H%M')}.pdf"
     st.success("PDF generado 🎉")
