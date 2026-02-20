@@ -52,9 +52,12 @@ FIELD_KEYS = {
     "registro_ot": "registro_ot",
     "nivel_riesgo": "nivel_riesgo",
     "hallazgos": "hallazgos",
+    "hallazgo_otro": "hallazgo_otro",
     "observaciones_raw": "observaciones_raw",
     "obs_fixed_preview": "obs_fixed_preview",
     "conclusion": "conclusion",
+    "uploader_fotos": "uploader_fotos",
+    "uploader_firma": "uploader_firma",
 }
 
 
@@ -75,8 +78,12 @@ def get_defaults() -> dict:
         FIELD_KEYS["registro_ot"]: "3333888",
         FIELD_KEYS["nivel_riesgo"]: "Medio",
         FIELD_KEYS["hallazgos"]: [],
+        FIELD_KEYS["hallazgo_otro"]: "",
         FIELD_KEYS["observaciones_raw"]: "Se observa la sala con tableros eléctricos abiertos, los demás equipos funcionando ok.",
         FIELD_KEYS["conclusion"]: "",
+        # Uploaders con key fija (para reset 100% confiable)
+        FIELD_KEYS["uploader_fotos"]: None,
+        FIELD_KEYS["uploader_firma"]: None,
     }
 
 
@@ -90,7 +97,6 @@ def init_state():
 def reset_form():
     # ✅ Reset definitivo (incluye uploaders siempre)
     st.session_state.clear()
-    # Reinyecta defaults
     defaults = get_defaults()
     for k, v in defaults.items():
         st.session_state[k] = v
@@ -227,9 +233,15 @@ def generate_conclusion_pro(
     disciplina: str,
     nivel_riesgo: str,
     hallazgos: List[str],
-    observaciones: str,
+    hallazgo_otro: str,
 ) -> str:
-    hall = ", ".join(hallazgos) if hallazgos else "Sin hallazgos críticos declarados"
+    hall_list = list(hallazgos or [])
+    otro = (hallazgo_otro or "").strip()
+    if "Otro" in hall_list and otro:
+        hall_list = [h for h in hall_list if h != "Otro"]
+        hall_list.append(f"Otro: {otro}")
+
+    hall = ", ".join(hall_list) if hall_list else "Sin hallazgos críticos declarados"
 
     if nivel_riesgo == "Bajo":
         riesgo = "Riesgo bajo"
@@ -292,7 +304,7 @@ def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -
 
     # Caja final en px (simple y estable)
     box_px_w = 900
-    box_px_h = int(box_px_w * ((box_h_mm * mm) / (box_w_mm * mm)))
+    box_px_h = int(box_px_w * (box_h_mm / box_w_mm))
 
     canvas_img = Image.new("RGB", (box_px_w, box_px_h), (255, 255, 255))
     img.thumbnail((box_px_w, box_px_h))
@@ -413,7 +425,6 @@ def build_pdf(
                 story.append(Paragraph("Una imagen no pudo ser procesada.", muted))
 
         if imgs:
-            # Tabla con EXACTAMENTE N columnas (no se dibujan bordes, no hay “casilleros”)
             img_table = Table([imgs], colWidths=[box_w_mm * mm] * len(imgs))
             img_table.hAlign = "CENTER"
             img_table.setStyle(
@@ -438,7 +449,7 @@ def build_pdf(
         try:
             buf = _thumb_jpeg_fixed_box(firma_img[1], 55, 18)
             sig = RLImage(buf, width=55 * mm, height=18 * mm)
-            sig.hAlign = "CENTER"  # 🔥 esto la centra sí o sí
+            sig.hAlign = "CENTER"
             story.append(sig)
             story.append(Spacer(1, 8))
         except Exception:
@@ -520,12 +531,20 @@ st.multiselect(
     key=FIELD_KEYS["hallazgos"],
 )
 
+if "Otro" in (st.session_state.get(FIELD_KEYS["hallazgos"]) or []):
+    st.text_input("Especifica 'Otro' (opcional)", key=FIELD_KEYS["hallazgo_otro"])
+else:
+    st.session_state[FIELD_KEYS["hallazgo_otro"]] = ""
+
 st.text_area("Observaciones técnicas", height=120, key=FIELD_KEYS["observaciones_raw"])
 
 # Corrección
 if st.session_state[FIELD_KEYS["show_correccion"]]:
     st.markdown("<hr/>", unsafe_allow_html=True)
-    st.markdown("<p class='muted'><b>Corrección básica:</b> sugerencias simples (tú decides aplicar).</p>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='muted'><b>Corrección básica:</b> sugerencias simples (tú decides aplicar).</p>",
+        unsafe_allow_html=True,
+    )
 
     if st.button("Sugerir correcciones en Observaciones"):
         fixed, changes = basic_spanish_fixes(st.session_state[FIELD_KEYS["observaciones_raw"]])
@@ -550,7 +569,7 @@ auto_conc = generate_conclusion_pro(
     st.session_state[FIELD_KEYS["disciplina"]],
     st.session_state[FIELD_KEYS["nivel_riesgo"]],
     st.session_state[FIELD_KEYS["hallazgos"]],
-    st.session_state[FIELD_KEYS["observaciones_raw"]],
+    st.session_state[FIELD_KEYS["hallazgo_otro"]],
 )
 
 if st.session_state[FIELD_KEYS["auto_conclusion"]]:
@@ -574,6 +593,7 @@ if st.session_state[FIELD_KEYS["include_photos"]]:
         "Subir imágenes (máximo 3) — todas se verán como miniatura del mismo tamaño",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
+        key=FIELD_KEYS["uploader_fotos"],
     )
 
 if st.session_state[FIELD_KEYS["include_signature"]]:
@@ -581,6 +601,7 @@ if st.session_state[FIELD_KEYS["include_signature"]]:
         "Firma (imagen JPG/PNG) — opcional",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=False,
+        key=FIELD_KEYS["uploader_firma"],
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
