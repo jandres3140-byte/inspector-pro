@@ -20,8 +20,10 @@ from reportlab.platypus import (
 )
 from reportlab.pdfgen import canvas
 
-from PIL import Image
+from PIL import Image, ImageOps
 from xml.sax.saxutils import escape
+
+from zoneinfo import ZoneInfo
 
 
 # -----------------------------
@@ -30,10 +32,11 @@ from xml.sax.saxutils import escape
 st.set_page_config(page_title="jcamp029.pro", page_icon="🧾", layout="centered")
 APP_TITLE = "jcamp029.pro"
 APP_SUBTITLE = "Generador profesional de informes de inspección técnica (PDF)."
+TZ_CL = ZoneInfo("America/Santiago")
 
 
 # -----------------------------
-# Keys + Defaults (reset real)
+# Keys + Defaults
 # -----------------------------
 FIELD_KEYS = {
     "theme": "theme",
@@ -54,8 +57,9 @@ FIELD_KEYS = {
     "observaciones_raw": "observaciones_raw",
     "obs_fixed_preview": "obs_fixed_preview",
     "conclusion": "conclusion",
-    "fotos_files": "fotos_files",
-    "firma_file": "firma_file",
+    # claves dinámicas para reset real de uploaders
+    "uploader_photos_nonce": "uploader_photos_nonce",
+    "uploader_sign_nonce": "uploader_sign_nonce",
 }
 
 
@@ -66,7 +70,7 @@ def get_defaults() -> dict:
         FIELD_KEYS["include_photos"]: True,
         FIELD_KEYS["show_correccion"]: True,
         FIELD_KEYS["auto_conclusion"]: True,
-        FIELD_KEYS["fecha"]: datetime.now().strftime("%d-%m-%Y"),
+        FIELD_KEYS["fecha"]: datetime.now(TZ_CL).strftime("%d-%m-%Y"),
         FIELD_KEYS["titulo"]: "Informe Técnico de Inspección",
         FIELD_KEYS["disciplina"]: "Eléctrica",
         FIELD_KEYS["equipo"]: "sala 31000",
@@ -78,6 +82,8 @@ def get_defaults() -> dict:
         FIELD_KEYS["hallazgos"]: [],
         FIELD_KEYS["observaciones_raw"]: "Se observa la sala con tableros eléctricos abiertos, los demás equipos funcionando ok.",
         FIELD_KEYS["conclusion"]: "",
+        FIELD_KEYS["uploader_photos_nonce"]: 0,
+        FIELD_KEYS["uploader_sign_nonce"]: 0,
     }
 
 
@@ -91,13 +97,20 @@ def init_state():
 def reset_form():
     defaults = get_defaults()
     for k, v in defaults.items():
-        st.session_state[k] = v
+        # OJO: no reseteamos nonces desde defaults, los incrementamos abajo
+        if k not in (FIELD_KEYS["uploader_photos_nonce"], FIELD_KEYS["uploader_sign_nonce"]):
+            st.session_state[k] = v
 
     st.session_state.pop("obs_fixed", None)
     st.session_state.pop("obs_changes", None)
 
-    st.session_state.pop(FIELD_KEYS["fotos_files"], None)
-    st.session_state.pop(FIELD_KEYS["firma_file"], None)
+    # ✅ Reset REAL de uploaders: cambiar el key (nonce)
+    st.session_state[FIELD_KEYS["uploader_photos_nonce"]] = int(
+        st.session_state.get(FIELD_KEYS["uploader_photos_nonce"], 0)
+    ) + 1
+    st.session_state[FIELD_KEYS["uploader_sign_nonce"]] = int(
+        st.session_state.get(FIELD_KEYS["uploader_sign_nonce"], 0)
+    ) + 1
 
     st.rerun()
 
@@ -226,13 +239,13 @@ def basic_spanish_fixes(text: str):
 
 
 # -----------------------------
-# Conclusión PRO (sin repetir Observaciones / sin plazo)
+# Conclusión PRO
 # -----------------------------
 def generate_conclusion_pro(
     disciplina: str,
     nivel_riesgo: str,
     hallazgos: List[str],
-    observaciones: str,  # se usa para contexto, pero NO se repite textual
+    observaciones: str,
 ) -> str:
     hall = ", ".join(hallazgos) if hallazgos else "Sin hallazgos críticos declarados"
 
@@ -279,9 +292,18 @@ def generate_conclusion_pro(
 # PDF helpers
 # -----------------------------
 def pil_to_rl_image(file_bytes: bytes, max_w_mm: float = 170, max_h_mm: float = 100) -> RLImage:
-    img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-    w_px, h_px = img.size
+    img = Image.open(io.BytesIO(file_bytes))
+    img = ImageOps.exif_transpose(img)
 
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        img = img.convert("RGBA")
+        bg.paste(img, mask=img.split()[-1])
+        img = bg
+    else:
+        img = img.convert("RGB")
+
+    w_px, h_px = img.size
     max_w = max_w_mm * mm
     max_h = max_h_mm * mm
 
@@ -294,7 +316,7 @@ def pil_to_rl_image(file_bytes: bytes, max_w_mm: float = 170, max_h_mm: float = 
         h = w / aspect
 
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=85)
+    img.save(buf, format="JPEG", quality=85, optimize=True)
     buf.seek(0)
     return RLImage(buf, width=w, height=h)
 
@@ -338,7 +360,8 @@ def build_pdf(
         c.saveState()
         c.setFont("Helvetica", 9)
         c.setFillColor(colors.grey)
-        c.drawString(18 * mm, 10 * mm, f"{APP_TITLE} · Generado {datetime.now().strftime('%d-%m-%Y %H:%M')}")
+        now_cl = datetime.now(TZ_CL).strftime("%d-%m-%Y %H:%M")
+        c.drawString(18 * mm, 10 * mm, f"{APP_TITLE} · Generado {now_cl}")
         c.drawRightString(A4[0] - 18 * mm, 10 * mm, f"Página {c.getPageNumber()}")
         c.restoreState()
 
@@ -379,47 +402,51 @@ def build_pdf(
     story.append(t)
     story.append(Spacer(1, 10))
 
-    # Observaciones (solo aquí, NO dentro de Conclusión)
     story.append(Paragraph("Observaciones", h2))
     story.append(Paragraph(text_to_paragraph_html(observaciones), body))
     story.append(Spacer(1, 8))
 
-    # Conclusión pro (sin repetir obs)
     story.append(Paragraph("Conclusión", h2))
     story.append(Paragraph(text_to_paragraph_html(conclusion), body))
     story.append(Spacer(1, 10))
 
-    # ✅ Evidencia principal (miniatura) ANTES de firma
+    # ✅ Evidencia principal (foto 1 miniatura)
     if include_fotos and fotos:
         story.append(Paragraph("Evidencia principal", h2))
         try:
-            # Foto 1 como miniatura
             story.append(pil_to_rl_image(fotos[0][1], max_w_mm=60, max_h_mm=35))
             story.append(Spacer(1, 6))
         except Exception:
             story.append(Paragraph("No fue posible procesar la evidencia principal.", muted))
             story.append(Spacer(1, 6))
 
-    # Firma (después de la miniatura)
+    # Firma
     if include_firma:
         story.append(Paragraph("Firma", h2))
         if firma_img:
             try:
-                story.append(pil_to_rl_image(firma_img[1], max_w_mm=55, max_h_mm=18))  # más pequeña
+                story.append(pil_to_rl_image(firma_img[1], max_w_mm=55, max_h_mm=18))
                 story.append(Spacer(1, 4))
             except Exception:
                 story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
         story.append(Paragraph(f"<b>{escape(inspector)}</b> · {escape(cargo)}", body))
         story.append(Spacer(1, 10))
 
-    # Evidencias fotográficas completas (página 2)
+    # ✅ Evidencias (sin repetir foto 1)
     if include_fotos and fotos:
         story.append(PageBreak())
         story.append(Paragraph("Evidencias fotográficas", h2))
         story.append(Paragraph("Se adjuntan imágenes asociadas a la inspección.", muted))
         story.append(Spacer(1, 10))
 
-        for idx, (fname, fbytes) in enumerate(fotos, start=1):
+        if len(fotos) >= 2:
+            fotos_iter = fotos[1:]   # desde la foto 2
+            start_num = 2
+        else:
+            fotos_iter = []          # si solo hay 1, ya fue “Evidencia principal”
+            start_num = 2
+
+        for idx, (fname, fbytes) in enumerate(fotos_iter, start=start_num):
             story.append(Paragraph(f"Foto {idx}: {escape(fname)}", body))
             try:
                 story.append(pil_to_rl_image(fbytes, max_w_mm=170, max_h_mm=95))
@@ -551,12 +578,15 @@ st.subheader("Evidencias y firma")
 fotos_files = None
 firma_file = None
 
+photos_key = f"fotos_files_{st.session_state[FIELD_KEYS['uploader_photos_nonce']]}"
+sign_key = f"firma_file_{st.session_state[FIELD_KEYS['uploader_sign_nonce']]}"
+
 if st.session_state[FIELD_KEYS["include_photos"]]:
     fotos_files = st.file_uploader(
         "Subir imágenes de evidencia (JPG/PNG) — puedes cargar varias",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
-        key=FIELD_KEYS["fotos_files"],
+        key=photos_key,
     )
 
 if st.session_state[FIELD_KEYS["include_signature"]]:
@@ -564,7 +594,7 @@ if st.session_state[FIELD_KEYS["include_signature"]]:
         "Firma (imagen JPG/PNG) — opcional",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=False,
-        key=FIELD_KEYS["firma_file"],
+        key=sign_key,
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
@@ -601,7 +631,7 @@ if st.button("Generar PDF Profesional ✅"):
         include_fotos=st.session_state[FIELD_KEYS["include_photos"]],
     )
 
-    filename = f"informe_inspeccion_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    filename = f"informe_inspeccion_{datetime.now(TZ_CL).strftime('%Y%m%d_%H%M')}.pdf"
     st.success("PDF generado 🎉")
     st.download_button(
         "Descargar PDF",
