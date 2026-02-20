@@ -414,8 +414,8 @@ def build_pdf(
     if include_fotos and fotos:
         story.append(Paragraph("Imágenes", h2))
 
-        box_w_mm = 55
-        box_h_mm = 35
+        box_w_mm = 80
+        box_h_mm = 50
         imgs: List[RLImage] = []
 
         for _, fbytes in fotos[:3]:
