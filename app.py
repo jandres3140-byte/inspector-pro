@@ -677,3 +677,73 @@ if st.button("Generar PDF Profesional ✅"):
 st.markdown("</div>", unsafe_allow_html=True)
 
 st.caption("Tip: si editas el código, Streamlit se recarga solo. Para detener: CTRL + C en la consola.")
+def get_defaults(blank: bool = False) -> dict:
+    base = {
+        FIELD_KEYS["theme"]: "Oscuro",
+        FIELD_KEYS["include_signature"]: True,
+        FIELD_KEYS["include_photos"]: True,
+        FIELD_KEYS["show_correccion"]: True,
+        FIELD_KEYS["auto_conclusion"]: True,
+        FIELD_KEYS["uploader_nonce"]: 0,
+    }
+
+    if blank:
+        # ✅ “LIMPIO DE VERDAD” (campos vacíos)
+        base.update({
+            FIELD_KEYS["fecha"]: datetime.now(TZ_CL).strftime("%d-%m-%Y"),
+            FIELD_KEYS["titulo"]: "",
+            FIELD_KEYS["disciplina"]: "Eléctrica",
+            FIELD_KEYS["equipo"]: "",
+            FIELD_KEYS["ubicacion"]: "",
+            FIELD_KEYS["inspector"]: "",
+            FIELD_KEYS["cargo"]: "",
+            FIELD_KEYS["registro_ot"]: "",
+            FIELD_KEYS["nivel_riesgo"]: "Medio",
+            FIELD_KEYS["hallazgos"]: [],
+            FIELD_KEYS["hallazgo_otro"]: "",
+            FIELD_KEYS["observaciones_raw"]: "",
+            FIELD_KEYS["conclusion"]: "",
+        })
+    else:
+        # (tu modo “con ejemplo precargado”, si lo quieres mantener)
+        base.update({
+            FIELD_KEYS["fecha"]: datetime.now(TZ_CL).strftime("%d-%m-%Y"),
+            FIELD_KEYS["titulo"]: "Informe Técnico de Inspección",
+            FIELD_KEYS["disciplina"]: "Eléctrica",
+            FIELD_KEYS["equipo"]: "sala 31000",
+            FIELD_KEYS["ubicacion"]: "Nodo 3500",
+            FIELD_KEYS["inspector"]: "JORGE CAMPOS AGUIRRE",
+            FIELD_KEYS["cargo"]: "Especialista eléctrico",
+            FIELD_KEYS["registro_ot"]: "3333888",
+            FIELD_KEYS["nivel_riesgo"]: "Medio",
+            FIELD_KEYS["hallazgos"]: [],
+            FIELD_KEYS["hallazgo_otro"]: "",
+            FIELD_KEYS["observaciones_raw"]: "Se observa la sala con tableros eléctricos abiertos, los demás equipos funcionando ok.",
+            FIELD_KEYS["conclusion"]: "",
+        })
+
+    return base
+
+
+def init_state():
+    defaults = get_defaults(blank=False)
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
+def reset_form():
+    # ✅ Respeta tema actual + resetea uploaders + deja campos vacíos
+    current_theme = st.session_state.get(FIELD_KEYS["theme"], "Claro")
+    nonce = int(st.session_state.get(FIELD_KEYS["uploader_nonce"], 0)) + 1
+
+    st.session_state.clear()
+
+    defaults = get_defaults(blank=True)
+    defaults[FIELD_KEYS["theme"]] = current_theme
+    defaults[FIELD_KEYS["uploader_nonce"]] = nonce
+
+    for k, v in defaults.items():
+        st.session_state[k] = v
+
+    st.rerun()
