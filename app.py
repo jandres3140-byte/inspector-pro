@@ -28,12 +28,13 @@ from xml.sax.saxutils import escape
 # Config
 # -----------------------------
 st.set_page_config(page_title="jcamp029.pro", page_icon="🧾", layout="centered")
+
 APP_TITLE = "jcamp029.pro"
 APP_SUBTITLE = "Generador profesional de informes de inspección técnica (PDF)."
 
 
 # -----------------------------
-# Keys + Defaults (para reset limpio)
+# Keys + Defaults (para reset real)
 # -----------------------------
 FIELD_KEYS = {
     "theme": "theme",
@@ -58,45 +59,57 @@ FIELD_KEYS = {
     "firma_file": "firma_file",
 }
 
-DEFAULTS = {
-    FIELD_KEYS["theme"]: "Oscuro",
-    FIELD_KEYS["include_signature"]: True,
-    FIELD_KEYS["include_photos"]: True,
-    FIELD_KEYS["show_correccion"]: True,
-    FIELD_KEYS["auto_conclusion"]: True,
-    FIELD_KEYS["fecha"]: datetime.now().strftime("%d-%m-%Y"),
-    FIELD_KEYS["titulo"]: "Informe Técnico de Inspección",
-    FIELD_KEYS["disciplina"]: "Eléctrica",
-    FIELD_KEYS["equipo"]: "sala 31000",
-    FIELD_KEYS["ubicacion"]: "Nodo 3500",
-    FIELD_KEYS["inspector"]: "JORGE CAMPOS AGUIRRE",
-    FIELD_KEYS["cargo"]: "Especialista eléctrico",
-    FIELD_KEYS["registro_ot"]: "3333888",
-    FIELD_KEYS["nivel_riesgo"]: "Medio",
-    FIELD_KEYS["hallazgos"]: [],
-    FIELD_KEYS["observaciones_raw"]: "Se observa la sala con tableros eléctricos abiertos, los demás equipos funcionando ok.",
-    FIELD_KEYS["conclusion"]: "",  # se recalcula si auto_conclusion=True
-}
+
+def get_defaults() -> dict:
+    # Ojo: fecha dinámica para que al limpiar vuelva a "hoy"
+    return {
+        FIELD_KEYS["theme"]: "Oscuro",
+        FIELD_KEYS["include_signature"]: True,
+        FIELD_KEYS["include_photos"]: True,
+        FIELD_KEYS["show_correccion"]: True,
+        FIELD_KEYS["auto_conclusion"]: True,
+        FIELD_KEYS["fecha"]: datetime.now().strftime("%d-%m-%Y"),
+        FIELD_KEYS["titulo"]: "Informe Técnico de Inspección",
+        FIELD_KEYS["disciplina"]: "Eléctrica",
+        FIELD_KEYS["equipo"]: "sala 31000",
+        FIELD_KEYS["ubicacion"]: "Nodo 3500",
+        FIELD_KEYS["inspector"]: "JORGE CAMPOS AGUIRRE",
+        FIELD_KEYS["cargo"]: "Especialista eléctrico",
+        FIELD_KEYS["registro_ot"]: "3333888",
+        FIELD_KEYS["nivel_riesgo"]: "Medio",
+        FIELD_KEYS["hallazgos"]: [],
+        FIELD_KEYS["observaciones_raw"]: "Se observa la sala con tableros eléctricos abiertos, los demás equipos funcionando ok.",
+        FIELD_KEYS["conclusion"]: "",
+    }
 
 
 def init_state():
-    for k, v in DEFAULTS.items():
+    defaults = get_defaults()
+    for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
 
 def reset_form():
-    # Setea valores base (widgets con key)
-    for k, v in DEFAULTS.items():
+    """
+    Reset REAL:
+    - Reasigna todos los keys de widgets
+    - Limpia resultados de corrección
+    - Limpia uploaders (pop)
+    - Fuerza rerun para que la UI se actualice al tiro
+    """
+    defaults = get_defaults()
+    for k, v in defaults.items():
         st.session_state[k] = v
 
-    # Limpia resultados de corrección (variables internas)
     st.session_state.pop("obs_fixed", None)
     st.session_state.pop("obs_changes", None)
 
-    # Para uploaders es más seguro borrar la key
+    # Uploaders: borrar key (es lo más confiable)
     st.session_state.pop(FIELD_KEYS["fotos_files"], None)
     st.session_state.pop(FIELD_KEYS["firma_file"], None)
+
+    st.rerun()
 
 
 init_state()
@@ -106,13 +119,17 @@ init_state()
 # Helpers UI / CSS
 # -----------------------------
 def apply_theme_css(theme: str) -> None:
+    """
+    Modo oscuro con alto contraste (más agresivo) para que se vea SIEMPRE.
+    """
     if theme == "Oscuro":
-        bg = "#0b1220"
-        fg = "#f8fafc"
-        muted = "#cbd5e1"
-        card = "#0f172a"
-        border = "#1e293b"
-        input_bg = "#0b1220"
+        bg = "#070B14"
+        fg = "#FFFFFF"
+        muted = "#D0D7E2"
+        card = "#0B1220"
+        border = "#263247"
+        input_bg = "#070B14"
+        hint = "#EAEFFF"
     else:
         bg = "#ffffff"
         fg = "#0f172a"
@@ -120,6 +137,7 @@ def apply_theme_css(theme: str) -> None:
         card = "#ffffff"
         border = "#e2e8f0"
         input_bg = "#ffffff"
+        hint = "#0f172a"
 
     st.markdown(
         f"""
@@ -128,23 +146,53 @@ def apply_theme_css(theme: str) -> None:
             background: {bg};
             color: {fg};
         }}
-        h1, h2, h3, h4, h5, h6, p, div, span, label {{
+
+        /* Markdown text + labels */
+        .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown div {{
             color: {fg} !important;
         }}
+        div[data-testid="stMarkdownContainer"] * {{
+            color: {fg} !important;
+        }}
+
+        /* Widget labels */
         div[data-testid="stWidgetLabel"] > label {{
             color: {fg} !important;
-            font-weight: 600 !important;
+            font-weight: 700 !important;
         }}
+
+        /* Inputs */
         input, textarea {{
             background: {input_bg} !important;
             color: {fg} !important;
             border: 1px solid {border} !important;
+            caret-color: {fg} !important;
         }}
+
+        /* Selectbox */
         div[data-baseweb="select"] > div {{
             background: {input_bg} !important;
             color: {fg} !important;
             border: 1px solid {border} !important;
         }}
+
+        /* Checkbox & radio text */
+        [data-baseweb="checkbox"] span, [data-baseweb="radio"] span {{
+            color: {fg} !important;
+            font-weight: 600 !important;
+        }}
+
+        /* File uploader text */
+        [data-testid="stFileUploader"] * {{
+            color: {fg} !important;
+        }}
+
+        /* Buttons */
+        .stButton>button {{
+            border: 1px solid {border} !important;
+        }}
+
+        /* Card */
         .block-container {{
             padding-top: 28px;
         }}
@@ -157,6 +205,10 @@ def apply_theme_css(theme: str) -> None:
         }}
         .muted {{
             color: {muted} !important;
+        }}
+        .hint {{
+            color: {hint} !important;
+            opacity: 0.95;
         }}
         </style>
         """,
@@ -193,6 +245,7 @@ def basic_spanish_fixes(text: str) -> Tuple[str, List[str]]:
         "mecanico": "mecánico",
         "tableros electricos": "tableros eléctricos",
         "inspeccion": "inspección",
+        "epp": "EPP",
     }
 
     for wrong, right in replacements.items():
@@ -210,71 +263,40 @@ def basic_spanish_fixes(text: str) -> Tuple[str, List[str]]:
     return t, changes
 
 
-def generate_conclusion(
+# -----------------------------
+# Conclusión breve (SIN plazo)
+# -----------------------------
+def generate_conclusion_short(
     disciplina: str,
     nivel_riesgo: str,
     hallazgos: List[str],
     observaciones: str,
 ) -> str:
+    hall = ", ".join(hallazgos) if hallazgos else "Sin hallazgos críticos"
     obs = normalize_spaces(observaciones)
-    hall = ", ".join(hallazgos) if hallazgos else "sin hallazgos críticos declarados"
 
     if nivel_riesgo == "Bajo":
-        riesgo_text = (
-            "Condición general aceptable. No se identifican riesgos inmediatos que impidan la continuidad operativa."
-        )
-        accion = "Se recomienda mantener monitoreo rutinario y registrar control en próxima ronda."
-        plazo = "Plazo sugerido: próximo ciclo de inspección."
+        riesgo = "Riesgo bajo"
+        accion = "Mantener control rutinario."
     elif nivel_riesgo == "Medio":
-        riesgo_text = (
-            "Se identifican desviaciones que requieren corrección planificada para evitar deterioro de condición y exposición a incidentes."
-        )
-        accion = "Se recomienda generar OT y ejecutar medidas correctivas/ajustes con prioridad media."
-        plazo = "Plazo sugerido: 7–14 días o según criticidad del área."
+        riesgo = "Riesgo medio"
+        accion = "Generar OT y corregir."
     else:
-        riesgo_text = (
-            "Se identifican condiciones de riesgo alto que pueden derivar en incidente o falla. Requiere acción prioritaria."
-        )
-        accion = (
-            "Se recomienda aislar/asegurar el área/equipo si corresponde, informar a supervisión y ejecutar corrección inmediata."
-        )
-        plazo = "Plazo sugerido: inmediato / dentro de 24 horas."
+        riesgo = "Riesgo alto"
+        accion = "Acción inmediata y notificar."
 
-    if disciplina == "Eléctrica":
-        foco = (
-            "Verificar integridad de protecciones, estado de tableros/cajas, señalización y control de energías (bloqueo/etiquetado), "
-            "orden y limpieza, cierre de puertas/tapas, y cumplimiento de resguardos."
-        )
-        medidas = (
-            "Acciones típicas: cierre y aseguramiento de tableros, reposición de tapas, torque/ajuste, ordenamiento de cables, "
-            "revisión de protecciones, pruebas funcionales según procedimiento."
-        )
-    elif disciplina == "Mecánica":
-        foco = (
-            "Verificar resguardos mecánicos, condición de transmisiones, fijaciones, holguras, lubricación, vibración/ruidos anómalos, "
-            "fugas, y condiciones de seguridad en partes móviles."
-        )
-        medidas = (
-            "Acciones típicas: ajuste de fijaciones, reposición de resguardos, corrección de fugas, lubricación, alineación básica, "
-            "verificación de puntos críticos y prueba operativa controlada."
-        )
-    else:
-        foco = (
-            "Verificar condiciones de seguridad, integridad de componentes, orden y limpieza, señalización, y desviaciones respecto al estándar."
-        )
-        medidas = "Acciones típicas: asegurar condición segura, corregir desviaciones, registrar evidencias y coordinar mantenimiento."
-
-    conclusion = (
-        f"Conclusión técnica ({disciplina}):\n"
-        f"- {riesgo_text}\n"
-        f"- Hallazgos declarados: {hall}.\n"
-        f"- En base a la inspección: {foco}\n"
-        f"- {accion}\n"
-        f"- {plazo}\n"
-        f"- Referencia de observaciones: {obs if obs else 'No se ingresaron observaciones.'}\n"
-        f"- {medidas}\n"
+    # Breve, directo, sin “Plazo sugerido”
+    out = (
+        f"Conclusión ({disciplina}): {riesgo}.\n"
+        f"- Hallazgos: {hall}.\n"
+        f"- Acción: {accion}"
     )
-    return conclusion
+
+    # Observación corta opcional (si hay)
+    if obs:
+        out += f"\n- Obs: {obs}"
+
+    return out
 
 
 # -----------------------------
@@ -411,11 +433,11 @@ def build_pdf(
     story.append(t)
     story.append(Spacer(1, 10))
 
-    story.append(Paragraph("Observaciones técnicas", h2))
+    story.append(Paragraph("Observaciones", h2))
     story.append(Paragraph(text_to_paragraph_html(observaciones), body))
     story.append(Spacer(1, 8))
 
-    story.append(Paragraph("Conclusión técnica", h2))
+    story.append(Paragraph("Conclusión", h2))
     story.append(Paragraph(text_to_paragraph_html(conclusion), body))
     story.append(Spacer(1, 10))
 
@@ -460,6 +482,7 @@ def apply_obs_fix():
         FIELD_KEYS["obs_fixed_preview"],
         st.session_state.get(FIELD_KEYS["observaciones_raw"], ""),
     )
+    st.rerun()
 
 
 # -----------------------------
@@ -468,9 +491,8 @@ def apply_obs_fix():
 st.markdown(f"<h1 style='margin-bottom:4px'>{APP_TITLE}</h1>", unsafe_allow_html=True)
 st.markdown(f"<p class='muted' style='margin-top:0'>{APP_SUBTITLE}</p>", unsafe_allow_html=True)
 
-# Theme
-st.radio("Tema", ["Claro", "Oscuro"], index=1 if st.session_state[FIELD_KEYS["theme"]] == "Oscuro" else 0,
-         horizontal=True, key=FIELD_KEYS["theme"])
+# Tema
+st.radio("Tema", ["Claro", "Oscuro"], horizontal=True, key=FIELD_KEYS["theme"])
 apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
 
 # Config card
@@ -494,7 +516,6 @@ st.markdown("<div class='app-card'>", unsafe_allow_html=True)
 
 st.text_input("Fecha", key=FIELD_KEYS["fecha"])
 st.text_input("Título del informe", key=FIELD_KEYS["titulo"])
-
 st.selectbox("Disciplina", ["Eléctrica", "Mecánica", "Otra"], key=FIELD_KEYS["disciplina"])
 
 st.text_input("Equipo / Área inspeccionada", key=FIELD_KEYS["equipo"])
@@ -528,10 +549,8 @@ st.text_area("Observaciones técnicas", height=120, key=FIELD_KEYS["observacione
 # Corrección básica
 if st.session_state[FIELD_KEYS["show_correccion"]]:
     st.markdown("<hr/>", unsafe_allow_html=True)
-    st.markdown(
-        "<p class='muted'><b>Corrección básica:</b> sugiere cambios simples (tú decides aplicar).</p>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<p class='muted'><b>Corrección básica:</b> sugerencias simples (tú decides aplicar).</p>",
+                unsafe_allow_html=True)
 
     if st.button("Sugerir correcciones en Observaciones"):
         fixed, changes = basic_spanish_fixes(st.session_state[FIELD_KEYS["observaciones_raw"]])
@@ -540,11 +559,7 @@ if st.session_state[FIELD_KEYS["show_correccion"]]:
         st.session_state[FIELD_KEYS["obs_fixed_preview"]] = fixed
 
     if "obs_fixed" in st.session_state:
-        st.text_area(
-            "Observaciones (sugerido)",
-            height=120,
-            key=FIELD_KEYS["obs_fixed_preview"],
-        )
+        st.text_area("Observaciones (sugerido)", height=120, key=FIELD_KEYS["obs_fixed_preview"])
         if st.session_state.get("obs_changes"):
             st.write("Cambios sugeridos:")
             for c in st.session_state["obs_changes"]:
@@ -552,24 +567,24 @@ if st.session_state[FIELD_KEYS["show_correccion"]]:
 
         st.button("Aplicar sugerencias a Observaciones", on_click=apply_obs_fix)
 
-# Conclusión (auto o manual)
+# Conclusión (breve)
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.checkbox("Auto-actualizar conclusión", key=FIELD_KEYS["auto_conclusion"])
 
-auto_conc = generate_conclusion(
+auto_conc = generate_conclusion_short(
     st.session_state[FIELD_KEYS["disciplina"]],
     st.session_state[FIELD_KEYS["nivel_riesgo"]],
     st.session_state[FIELD_KEYS["hallazgos"]],
     st.session_state[FIELD_KEYS["observaciones_raw"]],
 )
 
-# Si auto está activo, seteamos ANTES de crear el widget "conclusion"
+# Si auto está activo, seteamos antes de crear el widget
 if st.session_state[FIELD_KEYS["auto_conclusion"]]:
     st.session_state[FIELD_KEYS["conclusion"]] = auto_conc
 elif not st.session_state.get(FIELD_KEYS["conclusion"]):
     st.session_state[FIELD_KEYS["conclusion"]] = auto_conc
 
-st.text_area("Conclusión técnica (editable)", height=180, key=FIELD_KEYS["conclusion"])
+st.text_area("Conclusión (breve y editable)", height=140, key=FIELD_KEYS["conclusion"])
 
 st.markdown("</div>", unsafe_allow_html=True)
 
