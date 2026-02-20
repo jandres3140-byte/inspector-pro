@@ -94,20 +94,19 @@ def init_state():
 
 
 def reset_form():
-    # ✅ No se puede “vaciar” file_uploader seteando su key.
-    # ✅ Se resuelve incrementando un nonce y usando keys dinámicas.
-    nonce = int(st.session_state.get(FIELD_KEYS["uploader_nonce"], 0)) + 1
+    current_theme = st.session_state.get("theme", "Claro")
+    nonce = int(st.session_state.get("uploader_nonce", 0)) + 1
 
     st.session_state.clear()
 
     defaults = get_defaults()
-    defaults[FIELD_KEYS["uploader_nonce"]] = nonce
+    defaults["theme"] = current_theme
+    defaults["uploader_nonce"] = nonce
 
     for k, v in defaults.items():
         st.session_state[k] = v
 
     st.rerun()
-
 
 init_state()
 
