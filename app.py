@@ -56,8 +56,9 @@ FIELD_KEYS = {
     "observaciones_raw": "observaciones_raw",
     "obs_fixed_preview": "obs_fixed_preview",
     "conclusion": "conclusion",
-    "uploader_fotos": "uploader_fotos",
-    "uploader_firma": "uploader_firma",
+
+    # 🔥 clave para resetear uploaders sin pelear con Streamlit
+    "uploader_nonce": "uploader_nonce",
 }
 
 
@@ -81,9 +82,7 @@ def get_defaults() -> dict:
         FIELD_KEYS["hallazgo_otro"]: "",
         FIELD_KEYS["observaciones_raw"]: "Se observa la sala con tableros eléctricos abiertos, los demás equipos funcionando ok.",
         FIELD_KEYS["conclusion"]: "",
-        # Uploaders con key fija (para reset 100% confiable)
-        FIELD_KEYS["uploader_fotos"]: None,
-        FIELD_KEYS["uploader_firma"]: None,
+        FIELD_KEYS["uploader_nonce"]: 0,
     }
 
 
@@ -95,11 +94,18 @@ def init_state():
 
 
 def reset_form():
-    # ✅ Reset definitivo (incluye uploaders siempre)
+    # ✅ No se puede “vaciar” file_uploader seteando su key.
+    # ✅ Se resuelve incrementando un nonce y usando keys dinámicas.
+    nonce = int(st.session_state.get(FIELD_KEYS["uploader_nonce"], 0)) + 1
+
     st.session_state.clear()
+
     defaults = get_defaults()
+    defaults[FIELD_KEYS["uploader_nonce"]] = nonce
+
     for k, v in defaults.items():
         st.session_state[k] = v
+
     st.rerun()
 
 
@@ -293,7 +299,6 @@ def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -
     img = Image.open(io.BytesIO(file_bytes))
     img = ImageOps.exif_transpose(img)
 
-    # Aplanar transparencias
     if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
         bg = Image.new("RGB", img.size, (255, 255, 255))
         img = img.convert("RGBA")
@@ -302,7 +307,6 @@ def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -
     else:
         img = img.convert("RGB")
 
-    # Caja final en px (simple y estable)
     box_px_w = 900
     box_px_h = int(box_px_w * (box_h_mm / box_w_mm))
 
@@ -407,7 +411,6 @@ def build_pdf(
     story.append(Paragraph(text_to_paragraph_html(conclusion), body))
     story.append(Spacer(1, 10))
 
-    # ✅ Imágenes: 1–3, todas miniatura igual, SIN casilleros vacíos, centradas
     if include_fotos and fotos:
         story.append(Paragraph("Imágenes", h2))
 
@@ -436,14 +439,12 @@ def build_pdf(
                         ("RIGHTPADDING", (0, 0), (-1, -1), 2),
                         ("TOPPADDING", (0, 0), (-1, -1), 2),
                         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                        # ❌ sin BOX / sin INNERGRID
                     ]
                 )
             )
             story.append(img_table)
             story.append(Spacer(1, 10))
 
-    # ✅ Firma centrada (solo imagen, sin repetir nombre/cargo)
     if include_firma and firma_img:
         story.append(Paragraph("Firma", h2))
         try:
@@ -588,12 +589,16 @@ st.subheader("Imágenes y firma")
 fotos_files = None
 firma_file = None
 
+nonce = int(st.session_state.get(FIELD_KEYS["uploader_nonce"], 0))
+photos_key = f"uploader_fotos_{nonce}"
+sign_key = f"uploader_firma_{nonce}"
+
 if st.session_state[FIELD_KEYS["include_photos"]]:
     fotos_files = st.file_uploader(
         "Subir imágenes (máximo 3) — todas se verán como miniatura del mismo tamaño",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
-        key=FIELD_KEYS["uploader_fotos"],
+        key=photos_key,
     )
 
 if st.session_state[FIELD_KEYS["include_signature"]]:
@@ -601,7 +606,7 @@ if st.session_state[FIELD_KEYS["include_signature"]]:
         "Firma (imagen JPG/PNG) — opcional",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=False,
-        key=FIELD_KEYS["uploader_firma"],
+        key=sign_key,
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
