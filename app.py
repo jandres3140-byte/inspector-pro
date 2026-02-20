@@ -35,13 +35,22 @@ if "theme" not in st.session_state:
 if "form_nonce" not in st.session_state:
     st.session_state["form_nonce"] = 0
 
+# Prefills controlados (para que “Limpiar” borre SOLO inspector y cargo)
+if "prefill_inspector" not in st.session_state:
+    st.session_state["prefill_inspector"] = "JORGE CAMPOS AGUIRRE"
+
+if "prefill_cargo" not in st.session_state:
+    st.session_state["prefill_cargo"] = "Especialista eléctrico"
+
 
 def k(name: str) -> str:
-    """Key dinámica: al cambiar nonce, Streamlit reinicia todos los widgets."""
     return f"{name}_{st.session_state['form_nonce']}"
 
 
 def reset_form():
+    # Limpia SOLO inspector y cargo (los demás quedan con su valor por defecto/prefill)
+    st.session_state["prefill_inspector"] = ""
+    st.session_state["prefill_cargo"] = ""
     st.session_state["form_nonce"] += 1
     st.rerun()
 
@@ -113,6 +122,13 @@ def apply_theme_css(theme: str) -> None:
         .muted {{
             color: {muted} !important;
         }}
+
+        /* ✅ Flecha verde para botón Descargar PDF */
+        [data-testid="stDownloadButton"] button::before {{
+            content: "⬇ ";
+            color: #22c55e; /* verde */
+            font-weight: 900;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -167,7 +183,7 @@ def basic_spanish_fixes(text: str):
 
 
 # -----------------------------
-# Conclusión PRO
+# Conclusión PRO (varía por disciplina + riesgo + hallazgos)
 # -----------------------------
 def generate_conclusion_pro(disciplina: str, nivel_riesgo: str, hallazgos: List[str], hallazgo_otro: str) -> str:
     hall_list = list(hallazgos or [])
@@ -211,9 +227,12 @@ def generate_conclusion_pro(disciplina: str, nivel_riesgo: str, hallazgos: List[
 
 
 # -----------------------------
-# PDF helpers
+# PDF helpers (imágenes “cover” mismo tamaño)
 # -----------------------------
-def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> io.BytesIO:
+def _jpeg_cover_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> io.BytesIO:
+    """
+    Recorta tipo "cover" (como Instagram): todas quedan del MISMO tamaño y llenan el cuadro.
+    """
     img = Image.open(io.BytesIO(file_bytes))
     img = ImageOps.exif_transpose(img)
 
@@ -225,17 +244,15 @@ def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -
     else:
         img = img.convert("RGB")
 
-    box_px_w = 1400
-    box_px_h = int(box_px_w * (box_h_mm / box_w_mm))
+    # Tamaño destino en px (alto según relación mm)
+    target_w = 1600
+    target_h = int(target_w * (box_h_mm / box_w_mm))
 
-    canvas_img = Image.new("RGB", (box_px_w, box_px_h), (255, 255, 255))
-    img.thumbnail((box_px_w, box_px_h))
-    x = (box_px_w - img.size[0]) // 2
-    y = (box_px_h - img.size[1]) // 2
-    canvas_img.paste(img, (x, y))
+    # Fit = recorta para llenar
+    fitted = ImageOps.fit(img, (target_w, target_h), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
 
     buf = io.BytesIO()
-    canvas_img.save(buf, format="JPEG", quality=88, optimize=True)
+    fitted.save(buf, format="JPEG", quality=88, optimize=True)
     buf.seek(0)
     return buf
 
@@ -329,61 +346,74 @@ def build_pdf(
     story.append(Paragraph(text_to_paragraph_html(conclusion), body))
     story.append(Spacer(1, 10))
 
-    # Imágenes grandes
+    # ✅ Imágenes: todas mismo tamaño (cover)
     if include_fotos and fotos:
         story.append(Paragraph("Imágenes", h2))
+
         box_w_mm = 80
         box_h_mm = 50
 
         imgs: List[RLImage] = []
         for _, fbytes in fotos[:3]:
-            buf = _thumb_jpeg_fixed_box(fbytes, box_w_mm, box_h_mm)
-            im = RLImage(buf, width=box_w_mm * mm, height=box_h_mm * mm)
-            im.hAlign = "CENTER"
-            imgs.append(im)
+            try:
+                buf = _jpeg_cover_fixed_box(fbytes, box_w_mm, box_h_mm)
+                im = RLImage(buf, width=box_w_mm * mm, height=box_h_mm * mm)
+                im.hAlign = "CENTER"
+                imgs.append(im)
+            except Exception:
+                story.append(Paragraph("Una imagen no pudo ser procesada.", muted))
 
-        img_table = Table([imgs], colWidths=[box_w_mm * mm] * len(imgs))
-        img_table.hAlign = "CENTER"
-        img_table.setStyle(
-            TableStyle(
-                [
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ]
+        if imgs:
+            img_table = Table([imgs], colWidths=[box_w_mm * mm] * len(imgs))
+            img_table.hAlign = "CENTER"
+            img_table.setStyle(
+                TableStyle(
+                    [
+                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ]
+                )
             )
-        )
-        story.append(img_table)
-        story.append(Spacer(1, 10))
+            story.append(img_table)
+            story.append(Spacer(1, 10))
 
-    # Firma a la izquierda bajo "Firma" (sin miniatura)
+    # ✅ Firma a la izquierda, más separada del título “Firma”
     if include_firma and firma_img:
         story.append(Paragraph("Firma", h2))
-        img = Image.open(io.BytesIO(firma_img[1]))
-        img = ImageOps.exif_transpose(img)
+        story.append(Spacer(1, 6))  # más aire bajo el título
 
-        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-            bg = Image.new("RGB", img.size, (255, 255, 255))
-            img = img.convert("RGBA")
-            bg.paste(img, mask=img.split()[-1])
-            img = bg
-        else:
-            img = img.convert("RGB")
+        try:
+            img = Image.open(io.BytesIO(firma_img[1]))
+            img = ImageOps.exif_transpose(img)
 
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=90, optimize=True)
-        buf.seek(0)
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                img = img.convert("RGBA")
+                bg.paste(img, mask=img.split()[-1])
+                img = bg
+            else:
+                img = img.convert("RGB")
 
-        sig = RLImage(buf)
-        target_h = 22 * mm
-        sig.drawHeight = target_h
-        sig.drawWidth = target_h * (img.width / img.height)
-        sig.hAlign = "LEFT"
-        story.append(sig)
-        story.append(Spacer(1, 8))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=90, optimize=True)
+            buf.seek(0)
+
+            sig = RLImage(buf)
+            target_h = 24 * mm
+            sig.drawHeight = target_h
+            sig.drawWidth = target_h * (img.width / img.height)
+            sig.hAlign = "LEFT"
+
+            story.append(sig)
+            story.append(Spacer(1, 8))
+
+        except Exception:
+            story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
+            story.append(Spacer(1, 8))
 
     doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
     pdf = buffer.getvalue()
@@ -397,7 +427,6 @@ def build_pdf(
 st.markdown(f"<h1 style='margin-bottom:4px'>{APP_TITLE}</h1>", unsafe_allow_html=True)
 st.markdown(f"<p class='muted' style='margin-top:0'>{APP_SUBTITLE}</p>", unsafe_allow_html=True)
 
-# Tema (key estable)
 theme = st.radio("Tema", ["Claro", "Oscuro"], horizontal=True, key="theme")
 apply_theme_css(theme)
 
@@ -426,10 +455,11 @@ disciplina = st.selectbox("Disciplina", ["Eléctrica", "Mecánica", "Otra"], ind
 
 equipo = st.text_input("Equipo / Área inspeccionada", value="", key=k("equipo"))
 ubicacion = st.text_input("Ubicación", value="", key=k("ubicacion"))
-inspector = st.text_input("Inspector", value="JORGE CAMPOS AGUIRRE", key=k("inspector"))
-cargo = st.text_input("Cargo", value="Especialista eléctrico", key=k("cargo"))
-registro_ot = st.text_input("N° Registro / OT", value="", key=k("registro_ot"))
 
+inspector = st.text_input("Inspector", value=st.session_state.get("prefill_inspector", ""), key=k("inspector"))
+cargo = st.text_input("Cargo", value=st.session_state.get("prefill_cargo", ""), key=k("cargo"))
+
+registro_ot = st.text_input("N° Registro / OT", value="", key=k("registro_ot"))
 nivel_riesgo = st.selectbox("Nivel de riesgo", ["Bajo", "Medio", "Alto"], index=1, key=k("nivel_riesgo"))
 
 hallazgos = st.multiselect(
@@ -502,7 +532,7 @@ firma_file = None
 
 if include_photos:
     fotos_files = st.file_uploader(
-        "Subir imágenes (máximo 3) — en el PDF se verán grandes",
+        "Subir imágenes (máximo 3) — en el PDF se verán grandes y del mismo tamaño",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
         key=k("uploader_fotos"),
@@ -534,7 +564,6 @@ if st.button("Generar PDF Profesional ✅", key=k("btn_pdf")):
     if include_signature and firma_file:
         firma_img = (firma_file.name, firma_file.read())
 
-    # Leer observaciones desde el widget actual (por key dinámica)
     observaciones_val = st.session_state.get(k("observaciones"), "")
 
     pdf_bytes = build_pdf(
