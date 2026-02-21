@@ -19,7 +19,7 @@ from reportlab.platypus import (
     Image as RLImage,
 )
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageChops
 from xml.sax.saxutils import escape
 
 
@@ -33,11 +33,12 @@ TZ_CL = ZoneInfo("America/Santiago")
 
 UP_NONCE = "__uploader_nonce__"
 
-# 🔥 Tamaños GRANDES (mm)
-# - Para 2 columnas, el ancho útil es ~178mm; 2x86mm + separaciones queda OK.
-PHOTO_W_2COL_MM, PHOTO_H_2COL_MM = 86, 72     # cuando hay 2 o 3 fotos (grilla)
-PHOTO_W_FULL_MM, PHOTO_H_FULL_MM = 172, 95    # cuando hay 1 foto (ancho completo)
-SIGN_W_MM, SIGN_H_MM = 90, 90                # firma grande cuadrada
+# Tamaños (NO CAMBIO los tamaños de fotos como veníamos; solo ajusto layout para que quepa 1 página)
+PHOTO_W_2COL_MM, PHOTO_H_2COL_MM = 86, 72
+PHOTO_W_FULL_MM, PHOTO_H_FULL_MM = 172, 95
+
+# Firma: mantener grande, pero ahora “se verá grande” porque recorto bordes blancos
+SIGN_W_MM, SIGN_H_MM = 90, 60  # ✅ más presencia real en página sin forzar salto
 
 
 # -----------------------------
@@ -213,7 +214,7 @@ def text_to_paragraph_html(text: str) -> str:
 
 
 def trim_for_pdf(text: str, max_chars: int) -> str:
-    """Recorta SOLO para PDF, para ayudar a mantener 1 hoja cuando hay fotos/firma."""
+    """Recorta SOLO para PDF para ayudar a mantener 1 hoja cuando hay muchas fotos/firma."""
     t = normalize_spaces(text or "")
     if len(t) <= max_chars:
         return t
@@ -291,22 +292,17 @@ def apply_obs_fix():
 # Image helpers
 # -----------------------------
 def _img_to_jpeg_cover(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> io.BytesIO:
-    """
-    COVER: rellena el cuadro recortando al centro (se ve grande sí o sí).
-    Ideal para FOTOS.
-    """
+    """COVER: rellena el cuadro recortando al centro (para fotos)."""
     img = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
 
     box_px_w = 1800
     box_px_h = max(1, int(box_px_w * (box_h_mm / box_w_mm)))
 
-    # Escala para cubrir
     scale = max(box_px_w / img.width, box_px_h / img.height)
     new_w = int(img.width * scale)
     new_h = int(img.height * scale)
     img2 = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    # Recorte centrado
     left = (new_w - box_px_w) // 2
     top = (new_h - box_px_h) // 2
     img2 = img2.crop((left, top, left + box_px_w, top + box_px_h))
@@ -317,13 +313,34 @@ def _img_to_jpeg_cover(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> i
     return buf
 
 
-def _img_to_jpeg_contain(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> io.BytesIO:
+def _trim_signature(img: Image.Image) -> Image.Image:
     """
-    CONTAIN: encaja sin recortar, centrado con fondo blanco.
-    Ideal para FIRMA.
+    ✅ Recorta márgenes blancos/transparencia de la firma para que “se vea grande”
+    sin mandar todo a página 2.
     """
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
+    if img.mode in ("RGBA", "LA"):
+        bg = Image.new(img.mode, img.size, (255, 255, 255, 0))
+        diff = ImageChops.difference(img, bg)
+        bbox = diff.getbbox()
+        return img.crop(bbox) if bbox else img
 
+    # RGB: recorta por diferencia con blanco
+    rgb = img.convert("RGB")
+    bg = Image.new("RGB", rgb.size, (255, 255, 255))
+    diff = ImageChops.difference(rgb, bg)
+    bbox = diff.getbbox()
+    return rgb.crop(bbox) if bbox else rgb
+
+
+def _img_to_jpeg_signature_big(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> io.BytesIO:
+    """
+    Firma: recorta bordes y luego encaja (sin deformar).
+    Resultado: firma MUCHO más grande visualmente.
+    """
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes)))
+    img = _trim_signature(img)
+
+    img = img.convert("RGB")
     box_px_w = 1800
     box_px_h = max(1, int(box_px_w * (box_h_mm / box_w_mm)))
 
@@ -332,7 +349,7 @@ def _img_to_jpeg_contain(file_bytes: bytes, box_w_mm: float, box_h_mm: float) ->
     canvas_img.paste(img, ((box_px_w - img.size[0]) // 2, (box_px_h - img.size[1]) // 2))
 
     buf = io.BytesIO()
-    canvas_img.save(buf, format="JPEG", quality=90)
+    canvas_img.save(buf, format="JPEG", quality=92)
     buf.seek(0)
     return buf
 
@@ -359,7 +376,7 @@ def build_pdf(
     include_fotos: bool,
 ) -> bytes:
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, margin=14 * mm)  # un poco menos margen => más espacio útil
+    doc = SimpleDocTemplate(buffer, pagesize=A4, margin=14 * mm)
 
     styles = getSampleStyleSheet()
     h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=15, spaceAfter=6)
@@ -396,8 +413,7 @@ def build_pdf(
     )
     story.append(t)
 
-    # 🔒 Intento serio de 1 página:
-    # si hay fotos y/o firma, recorto el texto para que no empuje a página 2.
+    # Para mantener 1 página cuando hay media (fotos/firma)
     has_media = (include_fotos and bool(fotos)) or (include_firma and bool(firma_img))
     obs_pdf = trim_for_pdf(observaciones, 520 if has_media else 2000)
     con_pdf = trim_for_pdf(conclusion, 320 if has_media else 2000)
@@ -408,62 +424,121 @@ def build_pdf(
     story.append(Paragraph("Conclusión", h2))
     story.append(Paragraph(text_to_paragraph_html(con_pdf), body))
 
-    # ---------- IMÁGENES GRANDES ----------
-    if include_fotos and fotos:
+    # ✅ Layout combinado para NO irse a página 2
+    fotos_use = fotos[:3] if (include_fotos and fotos) else []
+    sig_use = firma_img if (include_firma and firma_img) else None
+
+    if fotos_use or sig_use:
         story.append(Paragraph("Imágenes", h2))
 
-        imgs = fotos[:3]
-        n = len(imgs)
+        n = len(fotos_use)
 
-        # 1 foto => ancho completo
-        if n == 1:
-            img_buf = _img_to_jpeg_cover(imgs[0][1], PHOTO_W_FULL_MM, PHOTO_H_FULL_MM)
-            story.append(
-                RLImage(img_buf, width=PHOTO_W_FULL_MM * mm, height=PHOTO_H_FULL_MM * mm)
+        # --- crear objetos imagen ---
+        def photo_obj(b: bytes, w: float, h: float) -> RLImage:
+            return RLImage(_img_to_jpeg_cover(b, w, h), width=w * mm, height=h * mm)
+
+        def sign_obj(b: bytes) -> RLImage:
+            return RLImage(_img_to_jpeg_signature_big(b, SIGN_W_MM, SIGN_H_MM),
+                           width=SIGN_W_MM * mm, height=SIGN_H_MM * mm)
+
+        # 1 foto
+        if n == 1 and not sig_use:
+            story.append(photo_obj(fotos_use[0][1], PHOTO_W_FULL_MM, PHOTO_H_FULL_MM))
+
+        elif n == 1 and sig_use:
+            p1 = photo_obj(fotos_use[0][1], PHOTO_W_FULL_MM, PHOTO_H_FULL_MM)
+            s1 = sign_obj(sig_use[1])
+            grid = Table(
+                [[p1],
+                 [s1]],
+                colWidths=[PHOTO_W_FULL_MM * mm],
             )
-
-        # 2 fotos => 2 columnas grandes
-        elif n == 2:
-            i1 = RLImage(_img_to_jpeg_cover(imgs[0][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM),
-                        width=PHOTO_W_2COL_MM * mm, height=PHOTO_H_2COL_MM * mm)
-            i2 = RLImage(_img_to_jpeg_cover(imgs[1][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM),
-                        width=PHOTO_W_2COL_MM * mm, height=PHOTO_H_2COL_MM * mm)
-            grid = Table([[i1, i2]], colWidths=[PHOTO_W_2COL_MM * mm, PHOTO_W_2COL_MM * mm])
-            grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                                      ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                                      ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                                      ("TOPPADDING", (0, 0), (-1, -1), 4),
-                                      ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+            grid.setStyle(TableStyle([
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]))
             story.append(grid)
 
-        # 3 fotos => 2 arriba + 1 grande abajo
-        else:
-            i1 = RLImage(_img_to_jpeg_cover(imgs[0][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM),
-                        width=PHOTO_W_2COL_MM * mm, height=PHOTO_H_2COL_MM * mm)
-            i2 = RLImage(_img_to_jpeg_cover(imgs[1][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM),
-                        width=PHOTO_W_2COL_MM * mm, height=PHOTO_H_2COL_MM * mm)
-            row1 = Table([[i1, i2]], colWidths=[PHOTO_W_2COL_MM * mm, PHOTO_W_2COL_MM * mm])
-            row1.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                                      ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                                      ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                                      ("TOPPADDING", (0, 0), (-1, -1), 4),
-                                      ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
-            story.append(row1)
+        # 2 fotos
+        elif n == 2 and not sig_use:
+            p1 = photo_obj(fotos_use[0][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            p2 = photo_obj(fotos_use[1][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            grid = Table([[p1, p2]], colWidths=[PHOTO_W_2COL_MM * mm, PHOTO_W_2COL_MM * mm])
+            grid.setStyle(TableStyle([
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+            story.append(grid)
 
-            story.append(Spacer(1, 4))
-            i3 = RLImage(_img_to_jpeg_cover(imgs[2][1], PHOTO_W_FULL_MM, PHOTO_H_FULL_MM),
-                        width=PHOTO_W_FULL_MM * mm, height=PHOTO_H_FULL_MM * mm)
-            story.append(i3)
+        elif n == 2 and sig_use:
+            p1 = photo_obj(fotos_use[0][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            p2 = photo_obj(fotos_use[1][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            s1 = sign_obj(sig_use[1])
+            grid = Table(
+                [
+                    [p1, p2],
+                    [s1, ""],  # firma abajo ocupando “visual” sin empujar a página 2
+                ],
+                colWidths=[PHOTO_W_2COL_MM * mm, PHOTO_W_2COL_MM * mm],
+            )
+            grid.setStyle(TableStyle([
+                ("SPAN", (0, 1), (1, 1)),  # ✅ firma ocupa las 2 columnas
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 1), (1, 1), "LEFT"),
+            ]))
+            story.append(grid)
 
-    # ---------- FIRMA GRANDE (SIN RECORTAR) ----------
-    if include_firma and firma_img:
-        story.append(Spacer(1, 6))
-        sig = RLImage(
-            _img_to_jpeg_contain(firma_img[1], SIGN_W_MM, SIGN_H_MM),
-            width=SIGN_W_MM * mm,
-            height=SIGN_H_MM * mm,
-        )
-        story.append(sig)
+        # 3 fotos
+        elif n == 3 and not sig_use:
+            p1 = photo_obj(fotos_use[0][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            p2 = photo_obj(fotos_use[1][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            p3 = photo_obj(fotos_use[2][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            grid = Table(
+                [[p1, p2],
+                 [p3, ""]],
+                colWidths=[PHOTO_W_2COL_MM * mm, PHOTO_W_2COL_MM * mm],
+            )
+            grid.setStyle(TableStyle([
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+            story.append(grid)
+
+        else:  # n == 3 and sig_use
+            p1 = photo_obj(fotos_use[0][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            p2 = photo_obj(fotos_use[1][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            p3 = photo_obj(fotos_use[2][1], PHOTO_W_2COL_MM, PHOTO_H_2COL_MM)
+            s1 = sign_obj(sig_use[1])
+
+            # ✅ 2x2: abajo va foto3 + firma lado a lado -> se queda en 1 página
+            grid = Table(
+                [[p1, p2],
+                 [p3, s1]],
+                colWidths=[PHOTO_W_2COL_MM * mm, PHOTO_W_2COL_MM * mm],
+            )
+            grid.setStyle(TableStyle([
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+            ]))
+            story.append(grid)
 
     doc.build(story)
     return buffer.getvalue()
@@ -539,9 +614,6 @@ with cY:
         st.rerun()
 
 st.text_area("Conclusión", height=140, key=FIELD_KEYS["conclusion"])
-st.caption(
-    f"📸 Fotos grandes: 1 foto {PHOTO_W_FULL_MM}×{PHOTO_H_FULL_MM} mm | 2-3 fotos {PHOTO_W_2COL_MM}×{PHOTO_H_2COL_MM} mm · ✒️ Firma: {SIGN_W_MM}×{SIGN_H_MM} mm"
-)
 st.markdown("</div>", unsafe_allow_html=True)
 
 # Archivos
