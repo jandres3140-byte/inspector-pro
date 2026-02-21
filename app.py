@@ -86,8 +86,12 @@ def get_defaults() -> dict:
     }
 
 def init_state():
+    # Forzar modo claro siempre al abrir
+    st.session_state[FIELD_KEYS["theme"]] = "Claro"
+
     if UP_NONCE not in st.session_state:
         st.session_state[UP_NONCE] = 0
+
     defaults = get_defaults()
     for k, v in defaults.items():
         if k not in st.session_state:
