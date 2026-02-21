@@ -57,13 +57,14 @@ jobs:
 
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
-          yes | sdkmanager --licenses
-          sdkmanager --install \
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses
+
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --install \
             "platform-tools" \
             "platforms;android-33" \
             "build-tools;33.0.2"
 
-          sdkmanager --list_installed
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --list_installed
 
       - name: Install Buildozer + Cython
         run: |
