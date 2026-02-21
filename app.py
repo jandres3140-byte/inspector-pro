@@ -4,92 +4,83 @@ import streamlit as st
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from PIL import Image, ImageOps
-from zoneinfo import ZoneInfo
 
-# Configuración Base
-st.set_page_config(page_title="jcamp029.pro", layout="centered")
-TZ_CL = ZoneInfo("America/Santiago")
-
-# ✅ MEDIDAS PARA CONTROL TOTAL
-ANCHO_PAGINA = 180 * mm
-ALTO_FOTO = 85 * mm
-ANCHO_FIRMA = 70 * mm
-
-def procesar_img(file_bytes, is_firma=False):
-    img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-    img = ImageOps.exif_transpose(img)
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=95)
-    buf.seek(0)
-    return buf
-
-# ✅ LA APP GENERA LA CONCLUSIÓN (No el inspector)
-def generar_conclusion_automatica(disciplina, riesgo, hallazgos):
-    prioridad = "INMEDIATA" if riesgo == "Alto" else "PROGRAMADA" if riesgo == "Medio" else "RUTINARIA"
-    texto_hallazgos = f" con hallazgos en: {', '.join(hallazgos)}" if hallazgos else " sin hallazgos críticos detectados"
+# --- LÓGICA DE INTELIGENCIA TÉCNICA ---
+def generar_resumen_tecnico(disciplina, riesgo, hallazgos):
+    # Diccionario de recomendaciones según disciplina
+    recomendaciones = {
+        "Eléctrica": "Asegurar integridad de tableros, reapriete de conexiones y validación de termografía.",
+        "Mecánica": "Verificar niveles de lubricación, alineación de componentes y estado de fijaciones.",
+        "Instrumentación": "Calibrar lazos de control, limpiar sensores y verificar comunicación con DCS/PLC."
+    }
     
-    return (f"Inspección de especialidad {disciplina} finalizada con nivel de riesgo {riesgo.upper()}. "
-            f"Se requiere intervención de carácter {prioridad}{texto_hallazgos}. "
-            f"Se recomienda normalizar desviaciones y registrar cierre en sistema SAP/OT.")
+    prioridad = "INMEDIATA" if riesgo == "Alto" else "PROGRAMADA" if riesgo == "Medio" else "RUTINARIA"
+    base = recomendaciones.get(disciplina, "Seguir pautas de mantenimiento preventivo.")
+    
+    texto = (f"Tras la inspección de especialidad {disciplina.upper()}, se determina un nivel de riesgo {riesgo.upper()}. "
+             f"Se requiere intervención de carácter {prioridad}. "
+             f"Acción recomendada: {base}")
+    
+    if hallazgos:
+        texto += f" Se debe prestar especial atención a: {', '.join(hallazgos)}."
+        
+    return texto
 
+# --- GENERADOR DE PDF ---
 def build_pdf(data, fotos, firma):
     buffer = io.BytesIO()
-    # Márgenes optimizados para una sola hoja
-    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=12*mm, bottomMargin=12*mm, leftMargin=15*mm, rightMargin=15*mm)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=15*mm, bottomMargin=15*mm)
     styles = getSampleStyleSheet()
     
-    # Estilos
-    style_title = ParagraphStyle("T", fontSize=18, alignment=1, spaceAfter=15, fontName="Helvetica-Bold")
-    style_h = ParagraphStyle("H", fontSize=11, fontName="Helvetica-Bold", textColor=colors.navy, spaceBefore=6)
-    style_b = ParagraphStyle("B", fontSize=10, leading=12)
+    # Estilos Personalizados
+    estilo_t = ParagraphStyle("T", fontSize=16, alignment=1, spaceAfter=12, fontName="Helvetica-Bold")
+    estilo_h = ParagraphStyle("H", fontSize=11, fontName="Helvetica-Bold", textColor=colors.navy, spaceBefore=10)
+    estilo_b = ParagraphStyle("B", fontSize=10, leading=12)
 
-    story = [Paragraph("INFORME TÉCNICO DE INSPECCIÓN", style_title)]
+    story = [Paragraph("INFORME TÉCNICO DE INSPECCIÓN", estilo_t)]
 
-    # Tabla de Datos
-    info = [
+    # Tabla de Datos (Estilizada)
+    tbl_data = [
         ["FECHA:", data['fecha'], "RIESGO:", data['riesgo']],
         ["DISCIPLINA:", data['disciplina'], "OT:", data['ot']],
         ["EQUIPO:", data['equipo'], "UBICACIÓN:", data['ubicacion']],
         ["INSPECTOR:", data['inspector'], "CARGO:", data['cargo']]
     ]
-    t = Table(info, colWidths=[30*mm, 60*mm, 30*mm, 60*mm])
+    t = Table(tbl_data, colWidths=[25*mm, 65*mm, 25*mm, 65*mm])
     t.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('FONTSIZE', (0,0), (-1,-1), 8),
         ('BACKGROUND', (0,0), (0,-1), colors.whitesmoke),
         ('BACKGROUND', (2,0), (2,-1), colors.whitesmoke),
-        ('PADDING', (0,0), (-1,-1), 5),
     ]))
     story.append(t)
 
-    # Contenido Generado
-    story.append(Paragraph("OBSERVACIONES TÉCNICAS", style_h))
-    story.append(Paragraph(data['obs'] or "Operación normal según inspección visual.", style_b))
+    # Cuerpo del Informe
+    story.append(Paragraph("OBSERVACIONES DE TERRENO", estilo_h))
+    story.append(Paragraph(data['obs'] or "Sin observaciones adicionales.", estilo_b))
     
-    story.append(Paragraph("CONCLUSIÓN TÉCNICA (SISTEMA)", style_h))
-    story.append(Paragraph(data['concl'], style_b))
+    story.append(Paragraph("RESUMEN TÉCNICO Y CONCLUSIÓN (SISTEMA)", estilo_h))
+    story.append(Paragraph(data['resumen'], estilo_b))
 
-    # ✅ IMÁGENES GRANDES
+    # Imágenes (Tamaño Ajustado a 12cm de ancho)
     if fotos:
-        story.append(Paragraph("EVIDENCIA FOTOGRÁFICA", style_h))
-        for f in fotos[:3]:
-            img_buf = procesar_img(f[1])
-            img_obj = RLImage(img_buf, width=ANCHO_PAGINA, height=ALTO_FOTO)
-            img_obj.hAlign = 'CENTER'
-            story.append(Spacer(1, 3*mm))
-            story.append(img_obj)
+        story.append(Paragraph("EVIDENCIA FOTOGRÁFICA", estilo_h))
+        for f_name, f_bytes in fotos:
+            img = RLImage(io.BytesIO(f_bytes), width=120*mm, height=70*mm)
+            img.hAlign = 'CENTER'
+            story.append(Spacer(1, 5*mm))
+            story.append(img)
 
-    # ✅ FIRMA
+    # Firma
     if firma:
-        story.append(Spacer(1, 8*mm))
-        story.append(Paragraph("FIRMA RESPONSABLE:", style_h))
-        f_buf = procesar_img(firma[1])
-        f_obj = RLImage(f_buf, width=ANCHO_FIRMA, height=35*mm)
-        f_obj.hAlign = 'LEFT'
-        story.append(f_obj)
+        story.append(Spacer(1, 10*mm))
+        story.append(Paragraph("FIRMA DEL RESPONSABLE:", estilo_h))
+        sig = RLImage(io.BytesIO(firma[1]), width=60*mm, height=30*mm)
+        sig.hAlign = 'LEFT'
+        story.append(sig)
 
     doc.build(story)
     return buffer.getvalue()
@@ -97,43 +88,33 @@ def build_pdf(data, fotos, firma):
 # --- INTERFAZ STREAMLIT ---
 st.title("jcamp029.pro")
 
-with st.expander("📝 DATOS DE LA INSPECCIÓN", expanded=True):
-    c1, c2 = st.columns(2)
-    with c1:
-        fecha = st.text_input("Fecha", datetime.now(TZ_CL).strftime("%d-%m-%Y"))
+# Botón de Limpieza
+if st.button("🧹 Limpiar Formulario"):
+    st.cache_data.clear()
+    st.rerun()
+
+with st.container(border=True):
+    col1, col2 = st.columns(2)
+    with col1:
+        fecha = st.text_input("Fecha", datetime.now().strftime("%d-%m-%Y"))
         disciplina = st.selectbox("Disciplina", ["Eléctrica", "Mecánica", "Instrumentación"])
-        equipo = st.text_input("Equipo / Sala")
-    with c2:
+        equipo = st.text_input("Equipo")
+    with col2:
         riesgo = st.selectbox("Nivel de Riesgo", ["Bajo", "Medio", "Alto"])
-        ubicacion = st.text_input("Ubicación / Nodo")
-        ot = st.text_input("N° OT / Registro")
-    
+        ubicacion = st.text_input("Ubicación") # Solo Ubicación, sin 'Nodo'
+        ot = st.text_input("N° OT")
+
     inspector = st.text_input("Inspector", "JORGE CAMPOS AGUIRRE")
     cargo = st.text_input("Cargo", "Especialista Eléctrico")
     
-    hallazgos = st.multiselect("Hallazgos detectados", ["Condición insegura", "Orden y Limpieza", "Falta rotulación", "Estructura dañada", "LOTO"])
-    obs = st.text_area("Observaciones de campo")
+    hallazgos = st.multiselect("Hallazgos Específicos", ["Desgaste", "Fuga", "Falta Rotulación", "Conexión Suelta", "Corrosión"])
+    obs = st.text_area("Observaciones Técnicas (Opcional)")
 
-# Generación Automática de Conclusión
-concl_auto = generar_conclusion_automatica(disciplina, riesgo, hallazgos)
-st.info(f"**Conclusión sugerida por la App:**\n\n{concl_auto}")
+# ✅ CONCLUSIÓN GENERADA POR LA APP
+resumen_final = generar_resumen_tecnico(disciplina, riesgo, hallazgos)
+st.subheader("🤖 Conclusión del Sistema")
+st.info(resumen_final)
 
 # Archivos
-col_f, col_s = st.columns(2)
-up_fotos = col_f.file_uploader("Fotos (Máx 3)", type=["jpg", "png"], accept_multiple_files=True)
-up_firma = col_s.file_uploader("Tu Firma", type=["jpg", "png"])
-
-if st.button("GENERAR PDF PROFESIONAL ✅", use_container_width=True):
-    if not up_firma:
-        st.error("Por favor, carga la firma para continuar.")
-    else:
-        lista_fotos = [(f.name, f.read()) for f in up_fotos] if up_fotos else []
-        data_pdf = {
-            'fecha': fecha, 'disciplina': disciplina, 'equipo': equipo,
-            'riesgo': riesgo, 'ubicacion': ubicacion, 'ot': ot,
-            'inspector': inspector, 'cargo': cargo, 'obs': obs,
-            'concl': concl_auto
-        }
-        
-        pdf_bytes = build_pdf(data_pdf, lista_fotos, (up_firma.name, up_firma.read()))
-        st.download_button("📥 Descargar Informe", pdf_bytes, f"Informe_{equipo}.pdf", "application/pdf", use_container_width=True)
+c_img, c_sig = st.columns(2)
+up_fotos = c_img.file_uploader("Fotos de Evidencia (Máx 2)", type=["jpg", "png"], accept_multiple_
