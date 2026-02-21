@@ -32,6 +32,10 @@ APP_TITLE = "jcamp029.pro"
 APP_SUBTITLE = "Generador profesional de informes de inspección técnica (PDF)."
 TZ_CL = ZoneInfo("America/Santiago")
 
+# ✅ Reset robusto (flag + nonce)
+RESET_FLAG = "__do_reset__"
+UP_NONCE = "__uploader_nonce__"
+
 
 # -----------------------------
 # Keys + Defaults
@@ -86,18 +90,38 @@ def init_state():
         if k not in st.session_state:
             st.session_state[k] = v
 
+    # asegurar reset infra
+    if UP_NONCE not in st.session_state:
+        st.session_state[UP_NONCE] = 0
+    if RESET_FLAG not in st.session_state:
+        st.session_state[RESET_FLAG] = False
 
-def reset_form():
-    # ✅ Reset definitivo (incluye uploaders siempre)
+
+def hard_reset_state():
+    """
+    ✅ Reset definitivo para Streamlit Cloud:
+    - limpia todo el session_state
+    - incrementa nonce (keys nuevas para uploaders)
+    - reinyecta defaults
+    """
+    old_nonce = int(st.session_state.get(UP_NONCE, 0))
     st.session_state.clear()
-    # Reinyecta defaults
+
+    st.session_state[UP_NONCE] = old_nonce + 1
+    st.session_state[RESET_FLAG] = False
+
     defaults = get_defaults()
     for k, v in defaults.items():
         st.session_state[k] = v
+
     st.rerun()
 
 
 init_state()
+
+# ✅ si el botón activó reset, lo ejecutamos ANTES de dibujar UI
+if st.session_state.get(RESET_FLAG):
+    hard_reset_state()
 
 
 # -----------------------------
@@ -271,17 +295,12 @@ def generate_conclusion_pro(
 
 
 # -----------------------------
-# PDF helpers (miniaturas iguales SIN casilleros)
+# PDF helpers
 # -----------------------------
 def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> io.BytesIO:
-    """
-    Miniatura con caja fija (letterbox blanco) para que TODAS queden iguales.
-    Retorna buffer JPEG listo para RLImage.
-    """
     img = Image.open(io.BytesIO(file_bytes))
     img = ImageOps.exif_transpose(img)
 
-    # Aplanar transparencias
     if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
         bg = Image.new("RGB", img.size, (255, 255, 255))
         img = img.convert("RGBA")
@@ -290,7 +309,6 @@ def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -
     else:
         img = img.convert("RGB")
 
-    # Caja final en px (simple y estable)
     box_px_w = 900
     box_px_h = int(box_px_w * ((box_h_mm * mm) / (box_w_mm * mm)))
 
@@ -318,7 +336,7 @@ def build_pdf(
     nivel_riesgo: str,
     observaciones: str,
     conclusion: str,
-    fotos: List[Tuple[str, bytes]],          # máx 3
+    fotos: List[Tuple[str, bytes]],
     firma_img: Optional[Tuple[str, bytes]],
     include_firma: bool,
     include_fotos: bool,
@@ -395,7 +413,6 @@ def build_pdf(
     story.append(Paragraph(text_to_paragraph_html(conclusion), body))
     story.append(Spacer(1, 10))
 
-    # ✅ Imágenes: 1–3, todas miniatura igual, SIN casilleros vacíos, centradas
     if include_fotos and fotos:
         story.append(Paragraph("Imágenes", h2))
 
@@ -413,7 +430,6 @@ def build_pdf(
                 story.append(Paragraph("Una imagen no pudo ser procesada.", muted))
 
         if imgs:
-            # Tabla con EXACTAMENTE N columnas (no se dibujan bordes, no hay “casilleros”)
             img_table = Table([imgs], colWidths=[box_w_mm * mm] * len(imgs))
             img_table.hAlign = "CENTER"
             img_table.setStyle(
@@ -425,20 +441,18 @@ def build_pdf(
                         ("RIGHTPADDING", (0, 0), (-1, -1), 2),
                         ("TOPPADDING", (0, 0), (-1, -1), 2),
                         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                        # ❌ sin BOX / sin INNERGRID
                     ]
                 )
             )
             story.append(img_table)
             story.append(Spacer(1, 10))
 
-    # ✅ Firma centrada (solo imagen, sin repetir nombre/cargo)
     if include_firma and firma_img:
         story.append(Paragraph("Firma", h2))
         try:
             buf = _thumb_jpeg_fixed_box(firma_img[1], 55, 18)
             sig = RLImage(buf, width=55 * mm, height=18 * mm)
-            sig.hAlign = "CENTER"  # 🔥 esto la centra sí o sí
+            sig.hAlign = "CENTER"
             story.append(sig)
             story.append(Spacer(1, 8))
         except Exception:
@@ -483,7 +497,10 @@ with c2:
 with c3:
     st.checkbox("Mostrar corrección básica", key=FIELD_KEYS["show_correccion"])
 with c4:
-    st.button("🧹 Limpiar formulario", on_click=reset_form)
+    # ✅ Botón definitivo (sin on_click)
+    if st.button("🧹 Limpiar formulario"):
+        st.session_state[RESET_FLAG] = True
+        st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -566,6 +583,8 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.markdown("<div class='app-card'>", unsafe_allow_html=True)
 st.subheader("Imágenes y firma")
 
+nonce = int(st.session_state.get(UP_NONCE, 0))
+
 fotos_files = None
 firma_file = None
 
@@ -574,6 +593,7 @@ if st.session_state[FIELD_KEYS["include_photos"]]:
         "Subir imágenes (máximo 3) — todas se verán como miniatura del mismo tamaño",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
+        key=f"fotos_{nonce}",  # ✅ clave dinámica
     )
 
 if st.session_state[FIELD_KEYS["include_signature"]]:
@@ -581,6 +601,7 @@ if st.session_state[FIELD_KEYS["include_signature"]]:
         "Firma (imagen JPG/PNG) — opcional",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=False,
+        key=f"firma_{nonce}",  # ✅ clave dinámica
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
