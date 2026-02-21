@@ -1,3 +1,19 @@
+name: Build Android APK (Kivy + Buildozer)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android-apk.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: android
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
