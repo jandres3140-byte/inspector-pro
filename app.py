@@ -10,20 +10,14 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle,
-    Image as RLImage,
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
-from PIL import Image, ImageOps, ImageChops
+from PIL import Image, ImageOps
 from xml.sax.saxutils import escape
 
+
 # -----------------------------
-# Configuración Global
+# Config
 # -----------------------------
 st.set_page_config(page_title="jcamp029.pro", page_icon="🧾", layout="centered")
 APP_TITLE = "jcamp029.pro"
@@ -32,18 +26,28 @@ TZ_CL = ZoneInfo("America/Santiago")
 
 UP_NONCE = "__uploader_nonce__"
 
-# Dimensiones PDF (mm)
-PHOTO_W_2COL_MM, PHOTO_H_2COL_MM = 86, 72
-PHOTO_W_FULL_MM, PHOTO_H_FULL_MM = 172, 95
-SIGN_W_MM, SIGN_H_MM = 90, 60
+# ✅ Reglas Multimedia
+# - Bloque total de imágenes (1,2,3) NO supera 15x6 cm
+TOTAL_IMG_W_MM = 150
+TOTAL_IMG_H_MM = 60
 
-# Claves de Estado
+# - Firma fija 3x3 cm
+SIGN_W_MM = 30
+SIGN_H_MM = 30
+
+
+# -----------------------------
+# Keys + Defaults
+# -----------------------------
 FIELD_KEYS = {
     "theme": "theme",
+    "theme_initialized": "theme_initialized",  # ✅ Opción 1: fuerza claro SOLO 1 vez por sesión
+
     "include_signature": "include_signature",
     "include_photos": "include_photos",
     "show_correccion": "show_correccion",
     "auto_conclusion": "auto_conclusion",
+
     "fecha": "fecha",
     "titulo": "titulo",
     "disciplina": "disciplina",
@@ -57,17 +61,22 @@ FIELD_KEYS = {
     "observaciones_raw": "observaciones_raw",
     "obs_fixed_preview": "obs_fixed_preview",
     "conclusion": "conclusion",
+
     "conclusion_locked": "conclusion_locked",
     "last_auto_hash": "last_auto_hash",
 }
 
+
 def get_defaults() -> dict:
     return {
-        FIELD_KEYS["theme"]: "Oscuro",
+        FIELD_KEYS["theme"]: "Claro",
+        FIELD_KEYS["theme_initialized"]: False,
+
         FIELD_KEYS["include_signature"]: True,
         FIELD_KEYS["include_photos"]: True,
         FIELD_KEYS["show_correccion"]: True,
         FIELD_KEYS["auto_conclusion"]: True,
+
         FIELD_KEYS["fecha"]: datetime.now(TZ_CL).strftime("%d-%m-%Y"),
         FIELD_KEYS["titulo"]: "Informe Técnico de Inspección",
         FIELD_KEYS["disciplina"]: "Eléctrica",
@@ -81,234 +90,414 @@ def get_defaults() -> dict:
         FIELD_KEYS["observaciones_raw"]: "",
         FIELD_KEYS["obs_fixed_preview"]: "",
         FIELD_KEYS["conclusion"]: "",
+
         FIELD_KEYS["conclusion_locked"]: False,
         FIELD_KEYS["last_auto_hash"]: "",
     }
 
-def init_state():
-    # Forzar modo claro siempre al abrir
-    st.session_state[FIELD_KEYS["theme"]] = "Claro"
 
+def init_state():
     if UP_NONCE not in st.session_state:
         st.session_state[UP_NONCE] = 0
 
     defaults = get_defaults()
+
+    # ✅ Opción 1: abrir siempre en CLARO al inicio de la sesión,
+    # pero permitir cambiar a Oscuro después (no se pisa en reruns).
+    if not st.session_state.get(FIELD_KEYS["theme_initialized"], False):
+        st.session_state[FIELD_KEYS["theme"]] = "Claro"
+        st.session_state[FIELD_KEYS["theme_initialized"]] = True
+
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
+
 def hard_reset_now():
-    current_theme = st.session_state.get(FIELD_KEYS["theme"], "Oscuro")
+    """
+    Reset definitivo del formulario preservando el tema actual.
+    """
+    current_theme = st.session_state.get(FIELD_KEYS["theme"], "Claro")
+
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+
     st.session_state[UP_NONCE] = 1
+
     defaults = get_defaults()
     for k, v in defaults.items():
         st.session_state[k] = v
+
     st.session_state[FIELD_KEYS["theme"]] = current_theme
+    st.session_state[FIELD_KEYS["theme_initialized"]] = True  # no volver a forzar
     st.rerun()
+
 
 init_state()
 
+
 # -----------------------------
-# Lógica de Interfaz y Temas
+# CSS Dinámico
 # -----------------------------
 def apply_theme_css(theme: str) -> None:
     if theme == "Oscuro":
-        bg, fg, muted, card, border = "#070B14", "#FFFFFF", "#D6DEEA", "#0B1220", "#2A3A58"
-        input_bg, placeholder, focus = "#0A1020", "#9FB0C8", "#5AA9FF"
+        bg, fg, muted, card, border, input_bg = "#070B14", "#FFFFFF", "#D6DEEA", "#0B1220", "#2A3A58", "#0A1020"
+        placeholder = "#9FB0C8"
+        focus = "#5AA9FF"
     else:
-        bg, fg, muted, card, border = "#FFFFFF", "#0F172A", "#334155", "#F8FAFC", "#E2E8F0"
-        input_bg, placeholder, focus = "#FFFFFF", "#64748B", "#2563EB"
+        bg, fg, muted, card, border, input_bg = "#FFFFFF", "#0f172a", "#334155", "#F8FAFC", "#E2E8F0", "#FFFFFF"
+        placeholder = "#64748B"
+        focus = "#2563EB"
 
-    st.markdown(f"""
+    st.markdown(
+        f"""
         <style>
         .stApp {{ background: {bg}; color: {fg}; }}
         div[data-testid="stMarkdownContainer"] * {{ color: {fg} !important; }}
         div[data-testid="stWidgetLabel"] > label {{ color: {fg} !important; font-weight: 800 !important; }}
-        .app-card {{ border: 1px solid {border}; background: {card}; border-radius: 14px; padding: 16px; margin-bottom: 16px; }}
-        input, textarea {{ background: {input_bg} !important; color: {fg} !important; border: 1px solid {border} !important; }}
+        .muted {{ color: {muted} !important; }}
+
+        .app-card {{
+            border: 1px solid {border};
+            background: {card};
+            border-radius: 14px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }}
+
+        input, textarea {{
+            background: {input_bg} !important;
+            color: {fg} !important;
+            border: 1px solid {border} !important;
+        }}
+        input::placeholder, textarea::placeholder {{
+            color: {placeholder} !important;
+            opacity: 1 !important;
+        }}
+        input:focus, textarea:focus {{
+            border-color: {focus} !important;
+            outline: none !important;
+            box-shadow: 0 0 0 2px rgba(90,169,255,0.18) !important;
+        }}
+
+        div[data-baseweb="select"] > div {{
+            background: {input_bg} !important;
+            color: {fg} !important;
+            border: 1px solid {border} !important;
+        }}
+        div[data-baseweb="select"] * {{ color: {fg} !important; }}
+
+        div[data-baseweb="tag"] {{
+            background: rgba(90,169,255,0.18) !important;
+            border: 1px solid {border} !important;
+        }}
+        div[data-baseweb="tag"] * {{ color: {fg} !important; }}
         </style>
-        """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 # -----------------------------
-# Procesamiento de Texto e IA
+# Texto / Corrección
 # -----------------------------
+def normalize_spaces(text: str) -> str:
+    text = text or ""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def basic_spanish_fixes(text: str):
     changes = []
-    t = (text or "").strip()
-    replacements = {"demasciado": "demasiado", "ubucacion": "ubicación", "epp": "EPP"}
+    t = normalize_spaces(text or "")
+    replacements = {
+        "demasciado": "demasiado",
+        "ubucacion": "ubicación",
+        "ubicacion": "ubicación",
+        "observacion": "observación",
+        "conclucion": "conclusión",
+        "electrico": "eléctrico",
+        "mecanico": "mecánico",
+        "inspeccion": "inspección",
+        "epp": "EPP",
+    }
     for wrong, right in replacements.items():
-        if re.search(rf"\b{wrong}\b", t, re.I):
-            t = re.sub(rf"\b{wrong}\b", right, t, flags=re.I)
+        pattern = re.compile(rf"\b{re.escape(wrong)}\b", re.IGNORECASE)
+        if pattern.search(t):
+            t = pattern.sub(right, t)
             changes.append(f"'{wrong}' → '{right}'")
     if t and t[0].islower():
-        t = t[0].upper() + t[1:]; changes.append("Capitalización")
+        t = t[0].upper() + t[1:]
+        changes.append("Capitalización inicial")
     return t, changes
 
-def generate_conclusion_short(disciplina, riesgo, hallazgos):
-    prioridad = "inmediata" if riesgo == "Alto" else "programada" if riesgo == "Medio" else "rutinaria"
-    h_str = ", ".join(hallazgos[:4]) if hallazgos else "General"
-    return f"{disciplina}: Riesgo {riesgo.lower()}. Prioridad {prioridad}. Hallazgos: {h_str}. Acción: Corregir según prioridad."
+
+def apply_obs_fix():
+    st.session_state[FIELD_KEYS["observaciones_raw"]] = st.session_state.get(FIELD_KEYS["obs_fixed_preview"], "")
+    st.rerun()
+
+
+# -----------------------------
+# Auto-conclusión (corta)
+# -----------------------------
+def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: List[str]) -> str:
+    riesgo = f"Riesgo {nivel_riesgo.lower()}"
+    prioridad = "inmediata" if nivel_riesgo == "Alto" else "programada" if nivel_riesgo == "Medio" else "rutinaria"
+    hall = ", ".join(hallazgos) if hallazgos else "General"
+    return f"{disciplina}: {riesgo}. Prioridad {prioridad}. Hallazgos: {hall}. Acción: corregir según prioridad."
+
+
+def compute_auto_hash() -> str:
+    d = st.session_state.get(FIELD_KEYS["disciplina"], "")
+    r = st.session_state.get(FIELD_KEYS["nivel_riesgo"], "")
+    h = ",".join(st.session_state.get(FIELD_KEYS["hallazgos"], []) or [])
+    return f"{d}|{r}|{h}"
+
 
 def sync_auto_conclusion_if_needed():
-    if st.session_state[FIELD_KEYS["auto_conclusion"]] and not st.session_state[FIELD_KEYS["conclusion_locked"]]:
+    if not st.session_state.get(FIELD_KEYS["auto_conclusion"], True):
+        return
+    if st.session_state.get(FIELD_KEYS["conclusion_locked"], False):
+        return
+
+    current_hash = compute_auto_hash()
+    last_hash = st.session_state.get(FIELD_KEYS["last_auto_hash"], "")
+
+    if current_hash != last_hash or not (st.session_state.get(FIELD_KEYS["conclusion"], "").strip()):
         st.session_state[FIELD_KEYS["conclusion"]] = generate_conclusion_short(
-            st.session_state[FIELD_KEYS["disciplina"]],
-            st.session_state[FIELD_KEYS["nivel_riesgo"]],
-            st.session_state[FIELD_KEYS["hallazgos"]]
+            st.session_state.get(FIELD_KEYS["disciplina"], "Otra"),
+            st.session_state.get(FIELD_KEYS["nivel_riesgo"], "Medio"),
+            st.session_state.get(FIELD_KEYS["hallazgos"], []),
         )
+        st.session_state[FIELD_KEYS["last_auto_hash"]] = current_hash
+
 
 # -----------------------------
-# Procesamiento de Imágenes (Firma/Fotos)
+# Imágenes (COVER)
 # -----------------------------
-def _trim_signature(img: Image.Image) -> Image.Image:
-    if img.mode != 'RGBA': img = img.convert('RGBA')
-    bg = Image.new('RGBA', img.size, (255, 255, 255, 0))
-    diff = ImageChops.difference(img, bg)
-    bbox = diff.getbbox()
-    return img.crop(bbox) if bbox else img
+def _img_cover(file_bytes: bytes, w_mm: float, h_mm: float) -> io.BytesIO:
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
+    box_px_w = 1500
+    box_px_h = max(1, int(box_px_w * (h_mm / w_mm)))
 
-def _img_to_jpeg_signature_big(img_bytes: bytes, target_w_mm, target_h_mm) -> io.BytesIO:
-    img = Image.open(io.BytesIO(img_bytes))
-    img = _trim_signature(img)
-    canvas = Image.new("RGB", (int(target_w_mm*10), int(target_h_mm*10)), (255,255,255))
-    img.thumbnail(canvas.size, Image.Resampling.LANCZOS)
-    offset = ((canvas.width - img.width)//2, (canvas.height - img.height)//2)
-    canvas.paste(img, offset, img if img.mode == 'RGBA' else None)
-    out = io.BytesIO()
-    canvas.save(out, format="JPEG", quality=92)
-    return out
+    scale = max(box_px_w / img.width, box_px_h / img.height)
+    img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
 
-def _img_to_jpeg_cover(img_bytes: bytes, w_mm, h_mm) -> io.BytesIO:
-    img = Image.open(io.BytesIO(img_bytes))
-    img = ImageOps.exif_transpose(img)
-    img = ImageOps.fit(img, (int(w_mm*10), int(h_mm*10)), Image.Resampling.LANCZOS)
-    out = io.BytesIO()
-    img.save(out, format="JPEG", quality=85)
-    return out
+    left = (img.width - box_px_w) // 2
+    top = (img.height - box_px_h) // 2
+    img = img.crop((left, top, left + box_px_w, top + box_px_h))
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    buf.seek(0)
+    return buf
+
 
 # -----------------------------
-# Generación del PDF
+# PDF
 # -----------------------------
-def build_pdf(titulo, fecha, equipo, ubicacion, inspector, cargo, registro_ot, disciplina, nivel_riesgo, hallazgos, observaciones, conclusion, fotos, firma_img, include_sign, include_photos):
+def build_pdf(
+    data_dict: dict,
+    fotos: List[Tuple[str, bytes]],
+    firma_img: Optional[Tuple[str, bytes]],
+) -> bytes:
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, margin=(14*mm, 14*mm, 14*mm, 14*mm))
+    doc = SimpleDocTemplate(buffer, pagesize=A4, margin=15 * mm)
     styles = getSampleStyleSheet()
-    h1 = ParagraphStyle('h1', fontSize=15, fontName='Helvetica-Bold', alignment=1, spaceAfter=8)
-    body = ParagraphStyle('body', fontSize=9.5, leading=11)
-    
-    story = [Paragraph("INFORME TÉCNICO DE INSPECCIÓN", h1)]
-    
-    # Tabla de Datos
-    data = [
-        ["Fecha", fecha], ["Título", titulo], ["Disciplina", disciplina], ["Riesgo", nivel_riesgo],
-        ["Equipo/Área", equipo or "—"], ["Ubicación", ubicacion or "—"], ["Inspector", inspector],
-        ["Cargo", cargo], ["Registro/OT", registro_ot or "—"], ["Hallazgos", ", ".join(hallazgos) or "—"]
+
+    story = [
+        Paragraph("INFORME TÉCNICO DE INSPECCIÓN", styles["Heading1"]),
+        Spacer(1, 8),
     ]
-    t = Table(data, colWidths=[42*mm, 130*mm])
-    t.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), colors.whitesmoke), ('FONTSIZE', (0,0), (-1,-1), 9), ('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
-    story.append(t)
-    story.append(Spacer(1, 4*mm))
 
-    # Lógica de recorte para 1 página
-    max_obs = 520 if (fotos or firma_img) else 2000
-    max_con = 320 if (fotos or firma_img) else 1000
-    
-    story.append(Paragraph(f"<b>Observaciones:</b> {escape(observaciones[:max_obs])}", body))
-    story.append(Spacer(1, 3*mm))
-    story.append(Paragraph(f"<b>Conclusión:</b> {escape(conclusion[:max_con])}", body))
-    story.append(Spacer(1, 5*mm))
+    table_data = [
+        ["Fecha", data_dict["fecha"]],
+        ["Título", data_dict["titulo"]],
+        ["Disciplina", data_dict["disciplina"]],
+        ["Riesgo", data_dict["nivel_riesgo"]],
+        ["Equipo/Área", data_dict["equipo"]],
+        ["Ubicación", data_dict["ubicacion"]],
+        ["Inspector", data_dict["inspector"]],
+        ["Cargo", data_dict["cargo"]],
+        ["OT/Registro", data_dict["registro_ot"]],
+    ]
 
-    # Multimedia Layout
-    photo_objs = [RLImage(_img_to_jpeg_cover(f, PHOTO_W_2COL_MM, PHOTO_H_2COL_MM), width=PHOTO_W_2COL_MM*mm, height=PHOTO_H_2COL_MM*mm) for f in fotos[:3]]
-    sign_obj = RLImage(_img_to_jpeg_signature_big(firma_img, SIGN_W_MM, SIGN_H_MM), width=SIGN_W_MM*mm, height=SIGN_H_MM*mm) if firma_img else None
+    t = Table(table_data, colWidths=[42 * mm, 138 * mm])
+    t.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.extend([t, Spacer(1, 10)])
 
-    # Distribución Dinámica
-    grid_data = []
-    if len(photo_objs) == 1:
-        if sign_obj: grid_data = [[photo_objs[0]], [sign_obj]]
-        else: story.append(RLImage(_img_to_jpeg_cover(fotos[0], PHOTO_W_FULL_MM, PHOTO_H_FULL_MM), PHOTO_W_FULL_MM*mm, PHOTO_H_FULL_MM*mm))
-    elif len(photo_objs) == 2:
-        if sign_obj: grid_data = [[photo_objs[0], photo_objs[1]], [sign_obj, ""]]
-        else: grid_data = [[photo_objs[0], photo_objs[1]]]
-    elif len(photo_objs) == 3:
-        if sign_obj: grid_data = [[photo_objs[0], photo_objs[1]], [photo_objs[2], sign_obj]]
-        else: grid_data = [[photo_objs[0], photo_objs[1]], [photo_objs[2], ""]]
+    story.append(Paragraph("Observaciones", styles["Heading2"]))
+    story.append(Paragraph(escape(data_dict["observaciones"]).replace("\n", "<br/>"), styles["BodyText"]))
+    story.append(Spacer(1, 8))
 
-    if grid_data:
-        gt = Table(grid_data, colWidths=[88*mm, 88*mm])
-        if len(photo_objs) == 2 and sign_obj: gt.setStyle(TableStyle([('SPAN', (0,1), (1,1)), ('ALIGN', (0,1), (1,1), 'CENTER')]))
-        story.append(gt)
+    story.append(Paragraph("Conclusión", styles["Heading2"]))
+    story.append(Paragraph(escape(data_dict["conclusion"]).replace("\n", "<br/>"), styles["BodyText"]))
+    story.append(Spacer(1, 8))
+
+    # ✅ Imágenes: 1 fila horizontal y el bloque total NO excede 15x6 cm
+    if fotos:
+        story.append(Paragraph("Imágenes", styles["Heading2"]))
+        use = fotos[:3]
+        n = len(use)
+
+        img_w_mm = TOTAL_IMG_W_MM / n
+        img_h_mm = TOTAL_IMG_H_MM
+
+        imgs = [
+            RLImage(_img_cover(b, img_w_mm, img_h_mm), width=img_w_mm * mm, height=img_h_mm * mm)
+            for _, b in use
+        ]
+
+        img_table = Table([imgs], colWidths=[img_w_mm * mm] * n)
+        img_table.setStyle(
+            TableStyle(
+                [
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story.append(img_table)
+
+    # ✅ Firma: 3x3 cm
+    if firma_img:
+        story.append(Spacer(1, 8))
+        sig = RLImage(_img_cover(firma_img[1], SIGN_W_MM, SIGN_H_MM), width=SIGN_W_MM * mm, height=SIGN_H_MM * mm)
+        story.append(sig)
 
     doc.build(story)
     return buffer.getvalue()
 
-# -----------------------------
-# Interfaz Streamlit (UI)
-# -----------------------------
-apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
-st.markdown(f"<h1>{APP_TITLE}</h1>", unsafe_allow_html=True)
-st.radio("Tema", ["Claro", "Oscuro"], key=FIELD_KEYS["theme"], horizontal=True)
 
-with st.container():
-    c1, c2, c3, c4 = st.columns(4)
-    c1.toggle("Firma", key=FIELD_KEYS["include_signature"])
-    c2.toggle("Fotos", key=FIELD_KEYS["include_photos"])
-    c3.toggle("Corrección", key=FIELD_KEYS["show_correccion"])
-    if c4.button("Limpiar formulario"): hard_reset_now()
+# -----------------------------
+# UI
+# -----------------------------
+st.markdown(f"<h1>{APP_TITLE}</h1><p class='muted'>{APP_SUBTITLE}</p>", unsafe_allow_html=True)
+
+st.radio("Tema", ["Claro", "Oscuro"], horizontal=True, key=FIELD_KEYS["theme"])
+apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
+
+# Configuración + Limpieza
+st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+c1, c2, c3, c4 = st.columns([1, 1, 1, 1.4])
+with c1:
+    st.checkbox("Firma", key=FIELD_KEYS["include_signature"])
+with c2:
+    st.checkbox("Fotos", key=FIELD_KEYS["include_photos"])
+with c3:
+    st.checkbox("Corrección", key=FIELD_KEYS["show_correccion"])
+with c4:
+    if st.button("Limpiar formulario", use_container_width=True):
+        hard_reset_now()
+st.markdown("</div>", unsafe_allow_html=True)
 
 # Formulario
-col_l, col_r = st.columns(2)
-fecha = col_l.text_input("Fecha", key=FIELD_KEYS["fecha"])
-titulo = col_r.text_input("Título", key=FIELD_KEYS["titulo"])
-disciplina = col_l.selectbox("Disciplina", ["Eléctrica", "Mecánica", "Instrumentación", "Seguridad"], key=FIELD_KEYS["disciplina"])
-riesgo = col_r.selectbox("Riesgo", ["Bajo", "Medio", "Alto"], key=FIELD_KEYS["nivel_riesgo"])
-equipo = col_l.text_input("Equipo/Área", key=FIELD_KEYS["equipo"])
-ubicacion = col_r.text_input("Ubicación", key=FIELD_KEYS["ubicacion"])
-inspector = col_l.text_input("Inspector", key=FIELD_KEYS["inspector"])
-cargo = col_r.text_input("Cargo", key=FIELD_KEYS["cargo"])
-ot = st.text_input("Nº Registro/OT", key=FIELD_KEYS["registro_ot"])
-hallazgos = st.multiselect("Hallazgos", ["LOTO", "Tableros", "Cableado", "Protecciones", "EPP", "Orden y limpieza"], key=FIELD_KEYS["hallazgos"])
+st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+cL, cR = st.columns(2)
+with cL:
+    st.text_input("Fecha", key=FIELD_KEYS["fecha"])
+with cR:
+    st.text_input("Título", key=FIELD_KEYS["titulo"])
 
-obs_raw = st.text_area("Observaciones", key=FIELD_KEYS["observaciones_raw"], height=130)
+cA, cB = st.columns(2)
+with cA:
+    st.selectbox("Disciplina", ["Eléctrica", "Mecánica", "Instrumental", "Civil", "Otra"], key=FIELD_KEYS["disciplina"])
+    st.text_input("Equipo/Área", key=FIELD_KEYS["equipo"])
+    st.text_input("Inspector", key=FIELD_KEYS["inspector"])
+with cB:
+    st.selectbox("Riesgo", ["Bajo", "Medio", "Alto"], key=FIELD_KEYS["nivel_riesgo"])
+    st.text_input("Ubicación", key=FIELD_KEYS["ubicacion"])
+    st.text_input("Cargo", key=FIELD_KEYS["cargo"])
 
+st.text_input("N° Registro/OT", key=FIELD_KEYS["registro_ot"])
+st.multiselect("Hallazgos", ["Condición insegura", "Orden y limpieza", "LOTO", "Tableros", "Otros"], key=FIELD_KEYS["hallazgos"])
+
+st.text_area("Observaciones", height=120, key=FIELD_KEYS["observaciones_raw"])
+
+# Corrección
 if st.session_state[FIELD_KEYS["show_correccion"]]:
     if st.button("Sugerir correcciones"):
-        fixed, logs = basic_spanish_fixes(obs_raw)
+        fixed, changes = basic_spanish_fixes(st.session_state[FIELD_KEYS["observaciones_raw"]])
         st.session_state[FIELD_KEYS["obs_fixed_preview"]] = fixed
-        if logs: st.info(f"Sugerencia: {fixed}")
-    if st.session_state[FIELD_KEYS["obs_fixed_preview"]]:
-        if st.button("Aplicar sugerencia"):
-            st.session_state[FIELD_KEYS["observaciones_raw"]] = st.session_state[FIELD_KEYS["obs_fixed_preview"]]
-            st.rerun()
+        if changes:
+            st.info("Sugerencias: " + ", ".join(changes))
+    if st.session_state.get(FIELD_KEYS["obs_fixed_preview"], "").strip():
+        st.text_area("Sugerencia", key=FIELD_KEYS["obs_fixed_preview"], height=90)
+        st.button("Aplicar sugerencias", on_click=apply_obs_fix)
 
-# Conclusión
-st.divider()
+# Auto / Manual
+st.checkbox("Auto", key=FIELD_KEYS["auto_conclusion"])
 sync_auto_conclusion_if_needed()
-cb1, cb2 = st.columns(2)
-if cb1.button("🤖 Auto", use_container_width=True): st.session_state[FIELD_KEYS["conclusion_locked"]] = False
-if cb2.button("✍️ Manual", use_container_width=True): st.session_state[FIELD_KEYS["conclusion_locked"]] = True
-st.text_area("Conclusión", key=FIELD_KEYS["conclusion"], height=140)
 
-# Carga de Archivos
-with st.container():
-    st.write("### Multimedia")
-    u_photos = st.file_uploader("Fotos (Máx 3)", type=["jpg", "png"], accept_multiple_files=True, key=f"f_{st.session_state[UP_NONCE]}") if st.session_state[FIELD_KEYS["include_photos"]] else []
-    u_sign = st.file_uploader("Firma", type=["png", "jpg"], key=f"s_{st.session_state[UP_NONCE]}") if st.session_state[FIELD_KEYS["include_signature"]] else None
+cX, cY = st.columns(2)
+with cX:
+    if st.button("🔁 Auto", use_container_width=True):
+        st.session_state[FIELD_KEYS["conclusion_locked"]] = False
+        st.session_state[FIELD_KEYS["last_auto_hash"]] = ""
+        sync_auto_conclusion_if_needed()
+        st.rerun()
+with cY:
+    if st.button("✍️ Manual", use_container_width=True):
+        st.session_state[FIELD_KEYS["conclusion_locked"]] = True
+        st.rerun()
 
+st.text_area("Conclusión", height=120, key=FIELD_KEYS["conclusion"])
+st.markdown("</div>", unsafe_allow_html=True)
+
+# Multimedia
+st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+st.subheader("Multimedia")
+nonce = st.session_state[UP_NONCE]
+
+fotos_files = (
+    st.file_uploader("Fotos (Máx 3)", type=["jpg", "png"], accept_multiple_files=True, key=f"f_{nonce}")
+    if st.session_state[FIELD_KEYS["include_photos"]]
+    else None
+)
+firma_file = (
+    st.file_uploader("Firma", type=["jpg", "png"], key=f"s_{nonce}")
+    if st.session_state[FIELD_KEYS["include_signature"]]
+    else None
+)
+st.markdown("</div>", unsafe_allow_html=True)
+
+# Generación
 if st.button("Generar PDF Profesional ✅", use_container_width=True):
-    f_bytes = [f.read() for f in u_photos]
-    s_bytes = u_sign.read() if u_sign else None
-    
-    pdf = build_pdf(
-        st.session_state[FIELD_KEYS["titulo"]], st.session_state[FIELD_KEYS["fecha"]],
-        st.session_state[FIELD_KEYS["equipo"]], st.session_state[FIELD_KEYS["ubicacion"]],
-        st.session_state[FIELD_KEYS["inspector"]], st.session_state[FIELD_KEYS["cargo"]],
-        st.session_state[FIELD_KEYS["registro_ot"]], st.session_state[FIELD_KEYS["disciplina"]],
-        st.session_state[FIELD_KEYS["nivel_riesgo"]], st.session_state[FIELD_KEYS["hallazgos"]],
-        st.session_state[FIELD_KEYS["observaciones_raw"]], st.session_state[FIELD_KEYS["conclusion"]],
-        f_bytes, s_bytes, st.session_state[FIELD_KEYS["include_signature"]], st.session_state[FIELD_KEYS["include_photos"]]
+    fotos = [(f.name, f.read()) for f in (fotos_files or [])[:3]]
+    firma = (firma_file.name, firma_file.read()) if firma_file else None
+
+    datos = {
+        "titulo": st.session_state[FIELD_KEYS["titulo"]],
+        "fecha": st.session_state[FIELD_KEYS["fecha"]],
+        "disciplina": st.session_state[FIELD_KEYS["disciplina"]],
+        "equipo": st.session_state[FIELD_KEYS["equipo"]],
+        "ubicacion": st.session_state[FIELD_KEYS["ubicacion"]],
+        "inspector": st.session_state[FIELD_KEYS["inspector"]],
+        "cargo": st.session_state[FIELD_KEYS["cargo"]],
+        "registro_ot": st.session_state[FIELD_KEYS["registro_ot"]],
+        "nivel_riesgo": st.session_state[FIELD_KEYS["nivel_riesgo"]],
+        "observaciones": st.session_state[FIELD_KEYS["observaciones_raw"]],
+        "conclusion": st.session_state[FIELD_KEYS["conclusion"]],
+    }
+
+    pdf_output = build_pdf(datos, fotos, firma)
+
+    st.download_button(
+        "Descargar Informe",
+        data=pdf_output,
+        file_name=f"informe_{datetime.now(TZ_CL).strftime('%H%M%S')}.pdf",
+        mime="application/pdf",
+        use_container_width=True,
     )
-    
-    st.download_button("Descargar Informe", data=pdf, file_name=f"informe_{datetime.now(TZ_CL).strftime('%H%M%S')}.pdf", mime="application/pdf", use_container_width=True)
