@@ -25,7 +25,7 @@ from xml.sax.saxutils import escape
 from zoneinfo import ZoneInfo
 
 # -----------------------------
-# Config
+# Configuración Inicial
 # -----------------------------
 st.set_page_config(page_title="jcamp029.pro", page_icon="🧾", layout="centered")
 APP_TITLE = "jcamp029.pro"
@@ -34,9 +34,6 @@ TZ_CL = ZoneInfo("America/Santiago")
 
 UP_NONCE = "__uploader_nonce__"
 
-# -----------------------------
-# Keys + Defaults
-# -----------------------------
 FIELD_KEYS = {
     "theme": "theme",
     "include_signature": "include_signature",
@@ -60,7 +57,7 @@ FIELD_KEYS = {
 
 def get_defaults() -> dict:
     return {
-        FIELD_KEYS["theme"]: "Claro",  # ✅ Corregido: Ahora inicia en Claro por defecto
+        FIELD_KEYS["theme"]: "Claro",  # ✅ Cambio 1: Modo Claro por defecto
         FIELD_KEYS["include_signature"]: True,
         FIELD_KEYS["include_photos"]: True,
         FIELD_KEYS["show_correccion"]: True,
@@ -101,46 +98,35 @@ def init_state():
 init_state()
 
 # -----------------------------
-# Helpers UI / CSS (Mejorado para Modo Oscuro)
+# CSS Dinámico (✅ Cambio 2: Legibilidad mejorada en Oscuro)
 # -----------------------------
 def apply_theme_css(theme: str) -> None:
     if theme == "Oscuro":
-        # Colores optimizados para legibilidad en negro
-        bg, fg, muted, card, border, input_bg = "#070B14", "#E0E6ED", "#A0AEC0", "#0B1220", "#2D3748", "#1A202C"
-        sel_txt = "#FFFFFF"
+        bg, fg, card, border, input_bg = "#070B14", "#FFFFFF", "#0B1220", "#2D3748", "#1A202C"
     else:
-        bg, fg, muted, card, border, input_bg = "#FFFFFF", "#1A202C", "#4A5568", "#F7FAFC", "#E2E8F0", "#FFFFFF"
-        sel_txt = "#1A202C"
+        bg, fg, card, border, input_bg = "#FFFFFF", "#0f172a", "#f8fafc", "#e2e8f0", "#FFFFFF"
 
     st.markdown(f"""
         <style>
         .stApp {{ background: {bg}; color: {fg}; }}
-        /* Forzar color de texto en todos los contenedores de markdown y labels */
         div[data-testid="stMarkdownContainer"] p {{ color: {fg} !important; }}
         div[data-testid="stWidgetLabel"] > label {{ color: {fg} !important; font-weight: 700 !important; }}
-        
-        /* Inputs, Textareas y Selects corregidos para modo oscuro */
         input, textarea, div[data-baseweb="select"] > div {{ 
             background-color: {input_bg} !important; 
-            color: {sel_txt} !important; 
+            color: {fg} !important; 
             border: 1px solid {border} !important; 
         }}
-        
-        /* Corregir visibilidad de texto dentro de los selectores (dropdowns) */
-        div[data-baseweb="select"] * {{ color: {sel_txt} !important; }}
-        
-        .app-card {{ border: 1px solid {border}; background: {card}; border-radius: 14px; padding: 16px; margin-bottom: 16px; }}
-        .muted {{ color: {muted} !important; }}
+        .app-card {{ border: 1px solid {border}; background: {card}; border-radius: 12px; padding: 20px; margin-bottom: 20px; }}
         </style>
         """, unsafe_allow_html=True)
 
 # -----------------------------
-# Lógica de PDF con Tamaños Duplicados
+# PDF y Procesamiento de Imágenes (✅ Cambio 3: Tamaño al Doble)
 # -----------------------------
-def _thumb_jpeg_fixed_box(file_bytes, box_w_mm, box_h_mm):
+def _thumb_jpeg(file_bytes, w_mm, h_mm):
     img = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
-    # Aumentamos resolución interna para mantener nitidez al ser más grandes
-    box_px_w, box_px_h = 1200, int(1200 * (box_h_mm / box_w_mm))
+    # Alta resolución para que no se vea pixelado al agrandar
+    box_px_w, box_px_h = 1600, int(1600 * (h_mm / w_mm))
     canvas_img = Image.new("RGB", (box_px_w, box_px_h), (255, 255, 255))
     img.thumbnail((box_px_w, box_px_h), Image.Resampling.LANCZOS)
     canvas_img.paste(img, ((box_px_w - img.size[0]) // 2, (box_px_h - img.size[1]) // 2))
@@ -149,13 +135,108 @@ def _thumb_jpeg_fixed_box(file_bytes, box_w_mm, box_h_mm):
     buf.seek(0)
     return buf
 
-def build_pdf(titulo, fecha, equipo, ubicacion, inspector, cargo, registro_ot, disciplina, nivel_riesgo, observaciones, conclusion, fotos, firma_img, include_firma, include_fotos):
+def build_pdf(data_dict, fotos, firma_img):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, margin=15*mm)
     styles = getSampleStyleSheet()
     
-    story = [Paragraph(f"<b>{titulo}</b>", styles["Heading1"]), Spacer(1, 10)]
+    # Encabezado
+    story = [Paragraph(f"<b>{data_dict['titulo']}</b>", styles["Heading1"]), Spacer(1, 10)]
     
-    # Tabla de datos
-    data = [["Fecha", fecha], ["Disciplina", disciplina], ["Área/Equipo", equipo], ["Ubicación", ubicacion], ["Inspector", inspector], ["Cargo", cargo]]
-    t =
+    # Tabla Principal
+    table_data = [
+        ["Fecha", data_dict['fecha']],
+        ["Disciplina", data_dict['disciplina']],
+        ["Equipo/Área", data_dict['equipo']],
+        ["Ubicación", data_dict['ubicacion']],
+        ["Inspector", data_dict['inspector']],
+        ["OT/Registro", data_dict['registro_ot']]
+    ]
+    t = Table(table_data, colWidths=[40*mm, 140*mm])
+    t.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), colors.whitesmoke)]))
+    story.extend([t, Spacer(1, 15)])
+
+    # Observaciones y Conclusión
+    story.append(Paragraph("<b>Observaciones:</b>", styles["Heading2"]))
+    story.append(Paragraph(data_dict['observaciones'].replace('\n', '<br/>'), styles["BodyText"]))
+    story.append(Spacer(1, 15))
+    story.append(Paragraph("<b>Conclusión:</b>", styles["Heading2"]))
+    story.append(Paragraph(data_dict['conclusion'].replace('\n', '<br/>'), styles["BodyText"]))
+
+    # Imágenes al DOBLE (80mm x 55mm aprox)
+    if fotos:
+        story.append(Spacer(1, 15))
+        story.append(Paragraph("<b>Imágenes de Respaldo:</b>", styles["Heading2"]))
+        for f_name, f_bytes in fotos:
+            img_data = _thumb_jpeg(f_bytes, 90, 60)
+            img_obj = RLImage(img_data, width=90*mm, height=60*mm)
+            img_obj.hAlign = 'LEFT'
+            story.extend([img_obj, Spacer(1, 5)])
+
+    # Firma al DOBLE (80mm de ancho)
+    if firma_img:
+        story.append(Spacer(1, 20))
+        story.append(Paragraph("<b>Firma:</b>", styles["Heading2"]))
+        sig_data = _thumb_jpeg(firma_img[1], 80, 30)
+        sig_obj = RLImage(sig_data, width=80*mm, height=30*mm)
+        sig_obj.hAlign = 'LEFT'
+        story.append(sig_obj)
+
+    doc.build(story)
+    return buffer.getvalue()
+
+# -----------------------------
+# Interfaz de Usuario
+# -----------------------------
+apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
+
+st.title(APP_TITLE)
+st.radio("Seleccionar Tema", ["Claro", "Oscuro"], horizontal=True, key=FIELD_KEYS["theme"])
+
+# Botón Limpiar
+if st.button("🧹 Limpiar Formulario"):
+    hard_reset_now()
+
+# Sección de Datos
+with st.container():
+    st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+    st.text_input("Título", key=FIELD_KEYS["titulo"])
+    st.text_input("Inspector", key=FIELD_KEYS["inspector"])
+    col1, col2 = st.columns(2)
+    with col1:
+        st.text_input("Fecha", key=FIELD_KEYS["fecha"])
+        st.text_input("Equipo", key=FIELD_KEYS["equipo"])
+    with col2:
+        st.selectbox("Disciplina", ["Eléctrica", "Mecánica", "Civil"], key=FIELD_KEYS["disciplina"])
+        st.text_input("Ubicación", key=FIELD_KEYS["ubicacion"])
+    st.text_input("OT", key=FIELD_KEYS["registro_ot"])
+    st.text_area("Observaciones", height=120, key=FIELD_KEYS["observaciones_raw"])
+    st.text_area("Conclusión", height=120, key=FIELD_KEYS["conclusion"])
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# Imágenes y Archivos
+with st.container():
+    st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+    nonce = st.session_state[UP_NONCE]
+    up_fotos = st.file_uploader("Fotos (Máx 3)", type=["jpg", "png"], accept_multiple_files=True, key=f"f_{nonce}")
+    up_firma = st.file_uploader("Firma", type=["jpg", "png"], key=f"s_{nonce}")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# Generación
+if st.button("✅ Generar PDF", use_container_width=True):
+    datos = {
+        "titulo": st.session_state[FIELD_KEYS["titulo"]],
+        "fecha": st.session_state[FIELD_KEYS["fecha"]],
+        "disciplina": st.session_state[FIELD_KEYS["disciplina"]],
+        "equipo": st.session_state[FIELD_KEYS["equipo"]],
+        "ubicacion": st.session_state[FIELD_KEYS["ubicacion"]],
+        "inspector": st.session_state[FIELD_KEYS["inspector"]],
+        "registro_ot": st.session_state[FIELD_KEYS["registro_ot"]],
+        "observaciones": st.session_state[FIELD_KEYS["observaciones_raw"]],
+        "conclusion": st.session_state[FIELD_KEYS["conclusion"]],
+    }
+    fotos = [(f.name, f.read()) for f in up_fotos[:3]] if up_fotos else []
+    firma = (up_firma.name, up_firma.read()) if up_firma else None
+    
+    pdf_output = build_pdf(datos, fotos, firma)
+    st.download_button("📩 Descargar Informe", data=pdf_output, file_name="informe.pdf", mime="application/pdf")
