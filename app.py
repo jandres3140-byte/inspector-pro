@@ -1,5 +1,7 @@
 import io
 import re
+import unicodedata
+from collections import Counter
 from datetime import datetime
 from typing import List, Tuple, Optional
 
@@ -41,7 +43,7 @@ SIGN_H_MM = 30
 # -----------------------------
 FIELD_KEYS = {
     "theme": "theme",
-    "theme_initialized": "theme_initialized",  # ✅ Opción 1: fuerza claro SOLO 1 vez por sesión
+    "theme_initialized": "theme_initialized",  # fuerza claro SOLO 1 vez por sesión
 
     "include_signature": "include_signature",
     "include_photos": "include_photos",
@@ -102,7 +104,7 @@ def init_state():
 
     defaults = get_defaults()
 
-    # ✅ Opción 1: abrir siempre en CLARO al inicio de la sesión,
+    # ✅ abrir siempre en CLARO al inicio de la sesión,
     # pero permitir cambiar a Oscuro después (no se pisa en reruns).
     if not st.session_state.get(FIELD_KEYS["theme_initialized"], False):
         st.session_state[FIELD_KEYS["theme"]] = "Claro"
@@ -140,7 +142,6 @@ init_state()
 # CSS Dinámico
 # -----------------------------
 def apply_theme_css(theme: str) -> None:
-    # Paleta base
     if theme == "Oscuro":
         bg = "#070B14"
         fg = "#FFFFFF"
@@ -173,13 +174,11 @@ def apply_theme_css(theme: str) -> None:
     st.markdown(
         f"""
         <style>
-        /* App background + text */
         .stApp {{ background: {bg}; color: {fg}; }}
         div[data-testid="stMarkdownContainer"] * {{ color: {fg} !important; }}
         div[data-testid="stWidgetLabel"] > label {{ color: {fg} !important; font-weight: 800 !important; }}
         .muted {{ color: {muted} !important; }}
 
-        /* Cards */
         .app-card {{
             border: 1px solid {border};
             background: {card};
@@ -187,7 +186,6 @@ def apply_theme_css(theme: str) -> None:
             padding: 16px;
             margin-bottom: 16px;
         }}
-        /* Si por render móvil queda un card vacío, lo ocultamos (el "botón fantasma") */
         .app-card:empty {{
             display: none !important;
             padding: 0 !important;
@@ -195,7 +193,6 @@ def apply_theme_css(theme: str) -> None:
             border: 0 !important;
         }}
 
-        /* Inputs */
         input, textarea {{
             background: {input_bg} !important;
             color: {fg} !important;
@@ -211,7 +208,6 @@ def apply_theme_css(theme: str) -> None:
             box-shadow: 0 0 0 2px rgba(90,169,255,0.18) !important;
         }}
 
-        /* Select */
         div[data-baseweb="select"] > div {{
             background: {input_bg} !important;
             color: {fg} !important;
@@ -219,14 +215,13 @@ def apply_theme_css(theme: str) -> None:
         }}
         div[data-baseweb="select"] * {{ color: {fg} !important; }}
 
-        /* Tags (multiselect pills) */
         div[data-baseweb="tag"] {{
             background: rgba(90,169,255,0.18) !important;
             border: 1px solid {border} !important;
         }}
         div[data-baseweb="tag"] * {{ color: {fg} !important; }}
 
-        /* ✅ BOTONES (fix de texto invisible en modo claro + mobile) */
+        /* Botones */
         div[data-testid="stButton"] button,
         div[data-testid="stDownloadButton"] button,
         div[data-testid="stFormSubmitButton"] button {{
@@ -243,19 +238,15 @@ def apply_theme_css(theme: str) -> None:
             color: {btn_text} !important;
             border-color: {btn_border} !important;
         }}
-        div[data-testid="stButton"] button * ,
-        div[data-testid="stDownloadButton"] button * ,
+        div[data-testid="stButton"] button *,
+        div[data-testid="stDownloadButton"] button *,
         div[data-testid="stFormSubmitButton"] button * {{
             color: {btn_text} !important;
         }}
 
-        /* ✅ FILE UPLOADER (fix "Browse files" invisible en modo claro) */
-        div[data-testid="stFileUploader"] {{
-            color: {fg} !important;
-        }}
-        div[data-testid="stFileUploader"] * {{
-            color: {fg} !important;
-        }}
+        /* File Uploader (Browse files visible en claro) */
+        div[data-testid="stFileUploader"] {{ color: {fg} !important; }}
+        div[data-testid="stFileUploader"] * {{ color: {fg} !important; }}
         div[data-testid="stFileUploader"] section {{
             background: {card} !important;
             border: 1px solid {border} !important;
@@ -268,11 +259,8 @@ def apply_theme_css(theme: str) -> None:
             font-weight: 800 !important;
             border-radius: 12px !important;
         }}
-        div[data-testid="stFileUploader"] button * {{
-            color: {btn_text} !important;
-        }}
+        div[data-testid="stFileUploader"] button * {{ color: {btn_text} !important; }}
 
-        /* Radios / checkboxes */
         div[role="radiogroup"] * {{ color: {fg} !important; }}
         </style>
         """,
@@ -281,7 +269,7 @@ def apply_theme_css(theme: str) -> None:
 
 
 # -----------------------------
-# Texto / Corrección
+# Corrección técnica (A)
 # -----------------------------
 def normalize_spaces(text: str) -> str:
     text = text or ""
@@ -291,29 +279,100 @@ def normalize_spaces(text: str) -> str:
     return text.strip()
 
 
-def basic_spanish_fixes(text: str):
-    changes = []
+def strip_accents(s: str) -> str:
+    # Quita diacríticos sin cambiar letras (á -> a, ü -> u, ñ se mantiene como ñ en NFD?).
+    # Nota: ñ al descomponer queda n + ~, por lo que aquí queda "n".
+    # Para corrección técnica es aceptable porque comparamos “sin acentos”.
+    return "".join(ch for ch in unicodedata.normalize("NFD", s) if unicodedata.category(ch) != "Mn")
+
+
+def match_case(original: str, replacement: str) -> str:
+    # Respeta el estilo del token original
+    if original.isupper():
+        return replacement.upper()
+    if len(original) > 1 and original[0].isupper() and original[1:].islower():
+        # Title case simple
+        return replacement[:1].upper() + replacement[1:].lower()
+    return replacement
+
+
+# Diccionario técnico controlado (dominio inspección)
+TECH_WORDS = {
+    # núcleo
+    "aseo": "aseo",
+    "area": "área",
+    "tecnico": "técnico",
+    "tecnica": "técnica",
+    "inspeccion": "inspección",
+    "ubicacion": "ubicación",
+    "conclusion": "conclusión",
+    "observacion": "observación",
+    "iluminacion": "iluminación",
+    "condicion": "condición",
+    "revision": "revisión",
+    "operacion": "operación",
+    "senalizacion": "señalización",
+    "proteccion": "protección",
+    "mantenimiento": "mantenimiento",
+
+    # disciplina
+    "electrico": "eléctrico",
+    "electrica": "eléctrica",
+    "mecanico": "mecánico",
+    "mecanica": "mecánica",
+    "instrumentacion": "instrumentación",
+
+    # siglas comunes
+    "epp": "EPP",
+}
+
+# Pre-cálculo: key sin acentos -> palabra correcta
+TECH_MAP = {strip_accents(k).lower(): v for k, v in TECH_WORDS.items()}
+
+
+def technical_spanish_fixes(text: str):
+    """
+    Corrector técnico:
+    - Normaliza espacios
+    - Corrige SOLO un set controlado de palabras (con y sin tildes mal puestas)
+    - Respeta estilo (mayúsculas / título / minúsculas)
+    - Entrega logs con conteo
+    """
     t = normalize_spaces(text or "")
-    replacements = {
-        "demasciado": "demasiado",
-        "ubucacion": "ubicación",
-        "ubicacion": "ubicación",
-        "observacion": "observación",
-        "conclucion": "conclusión",
-        "electrico": "eléctrico",
-        "mecanico": "mecánico",
-        "inspeccion": "inspección",
-        "epp": "EPP",
-    }
-    for wrong, right in replacements.items():
-        pattern = re.compile(rf"\b{re.escape(wrong)}\b", re.IGNORECASE)
-        if pattern.search(t):
-            t = pattern.sub(right, t)
-            changes.append(f"'{wrong}' → '{right}'")
-    if t and t[0].islower():
-        t = t[0].upper() + t[1:]
-        changes.append("Capitalización inicial")
-    return t, changes
+    changes_counter = Counter()
+
+    # Tokenizador: solo palabras (no números), incluyendo letras con tildes
+    word_re = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+")
+
+    def repl(m: re.Match) -> str:
+        w = m.group(0)
+
+        # Protecciones: si contiene dígitos, no tocar (aunque no debería entrar)
+        if any(ch.isdigit() for ch in w):
+            return w
+
+        key = strip_accents(w).lower()
+
+        if key in TECH_MAP:
+            new_word = match_case(w, TECH_MAP[key])
+            if new_word != w:
+                changes_counter[f"{w} → {new_word}"] += 1
+            return new_word
+
+        return w
+
+    t2 = word_re.sub(repl, t)
+
+    # Capitalización inicial (sin tocar el resto)
+    logs = []
+    if t2 and t2[0].islower():
+        t2 = t2[0].upper() + t2[1:]
+        changes_counter["Capitalización inicial"] += 1
+
+    for k, n in changes_counter.most_common():
+        logs.append(f"{k} ({n})")
+
+    return t2, logs
 
 
 def apply_obs_fix():
@@ -426,7 +485,7 @@ def build_pdf(
     story.append(Paragraph(escape(data_dict["conclusion"]).replace("\n", "<br/>"), styles["BodyText"]))
     story.append(Spacer(1, 8))
 
-    # ✅ Imágenes: 1 fila horizontal y el bloque total NO excede 15x6 cm
+    # Imágenes: 1 fila horizontal (máx 15x6 cm)
     if fotos:
         story.append(Paragraph("Imágenes", styles["Heading2"]))
         use = fotos[:3]
@@ -453,7 +512,7 @@ def build_pdf(
         )
         story.append(img_table)
 
-    # ✅ Firma: 3x3 cm (al final)
+    # Firma: 3x3 cm (al final)
     if firma_img:
         story.append(Spacer(1, 8))
         sig = RLImage(_img_cover(firma_img[1], SIGN_W_MM, SIGN_H_MM), width=SIGN_W_MM * mm, height=SIGN_H_MM * mm)
@@ -466,13 +525,11 @@ def build_pdf(
 # -----------------------------
 # UI
 # -----------------------------
-# ✅ Aplicar CSS al inicio del render (reduce parpadeo y widgets raros)
 apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
 
 st.markdown(f"<h1><i>{APP_TITLE}</i></h1><p class='muted'>{APP_SUBTITLE}</p>", unsafe_allow_html=True)
 
 st.radio("Tema", ["Claro", "Oscuro"], horizontal=True, key=FIELD_KEYS["theme"])
-# Re-aplicar CSS por si cambió el tema (en el rerun quedará estable)
 apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
 
 # Configuración + Limpieza
@@ -508,17 +565,23 @@ with cB:
     st.text_input("Cargo", key=FIELD_KEYS["cargo"])
 
 st.text_input("N° Registro/OT", key=FIELD_KEYS["registro_ot"])
-st.multiselect("Hallazgos", ["Condición insegura", "Orden y limpieza", "LOTO", "Tableros", "Otros"], key=FIELD_KEYS["hallazgos"])
+st.multiselect(
+    "Hallazgos",
+    ["Condición insegura", "Orden y limpieza", "LOTO", "Tableros", "Otros"],
+    key=FIELD_KEYS["hallazgos"],
+)
 
 st.text_area("Observaciones", height=120, key=FIELD_KEYS["observaciones_raw"])
 
-# Corrección
+# Corrección (técnica A)
 if st.session_state[FIELD_KEYS["show_correccion"]]:
     if st.button("Sugerir correcciones"):
-        fixed, changes = basic_spanish_fixes(st.session_state[FIELD_KEYS["observaciones_raw"]])
+        fixed, changes = technical_spanish_fixes(st.session_state[FIELD_KEYS["observaciones_raw"]])
         st.session_state[FIELD_KEYS["obs_fixed_preview"]] = fixed
         if changes:
-            st.info("Sugerencias: " + ", ".join(changes))
+            st.info("Cambios: " + " | ".join(changes))
+        else:
+            st.info("Sin cambios detectados.")
     if st.session_state.get(FIELD_KEYS["obs_fixed_preview"], "").strip():
         st.text_area("Sugerencia", key=FIELD_KEYS["obs_fixed_preview"], height=90)
         st.button("Aplicar sugerencias", on_click=apply_obs_fix)
