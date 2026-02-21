@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
 from PIL import Image, ImageOps
@@ -140,23 +140,46 @@ init_state()
 # CSS Dinámico
 # -----------------------------
 def apply_theme_css(theme: str) -> None:
+    # Paleta base
     if theme == "Oscuro":
-        bg, fg, muted, card, border, input_bg = "#070B14", "#FFFFFF", "#D6DEEA", "#0B1220", "#2A3A58", "#0A1020"
+        bg = "#070B14"
+        fg = "#FFFFFF"
+        muted = "#D6DEEA"
+        card = "#0B1220"
+        border = "#2A3A58"
+        input_bg = "#0A1020"
         placeholder = "#9FB0C8"
         focus = "#5AA9FF"
+
+        btn_bg = "#0B1220"
+        btn_border = "#2A3A58"
+        btn_text = "#FFFFFF"
+        btn_hover = "#101A2E"
     else:
-        bg, fg, muted, card, border, input_bg = "#FFFFFF", "#0f172a", "#334155", "#F8FAFC", "#E2E8F0", "#FFFFFF"
+        bg = "#FFFFFF"
+        fg = "#0F172A"
+        muted = "#334155"
+        card = "#F8FAFC"
+        border = "#E2E8F0"
+        input_bg = "#FFFFFF"
         placeholder = "#64748B"
         focus = "#2563EB"
+
+        btn_bg = "#FFFFFF"
+        btn_border = "#CBD5E1"
+        btn_text = "#0F172A"
+        btn_hover = "#F1F5F9"
 
     st.markdown(
         f"""
         <style>
+        /* App background + text */
         .stApp {{ background: {bg}; color: {fg}; }}
         div[data-testid="stMarkdownContainer"] * {{ color: {fg} !important; }}
         div[data-testid="stWidgetLabel"] > label {{ color: {fg} !important; font-weight: 800 !important; }}
         .muted {{ color: {muted} !important; }}
 
+        /* Cards */
         .app-card {{
             border: 1px solid {border};
             background: {card};
@@ -164,7 +187,15 @@ def apply_theme_css(theme: str) -> None:
             padding: 16px;
             margin-bottom: 16px;
         }}
+        /* Si por render móvil queda un card vacío, lo ocultamos (el "botón fantasma") */
+        .app-card:empty {{
+            display: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: 0 !important;
+        }}
 
+        /* Inputs */
         input, textarea {{
             background: {input_bg} !important;
             color: {fg} !important;
@@ -180,6 +211,7 @@ def apply_theme_css(theme: str) -> None:
             box-shadow: 0 0 0 2px rgba(90,169,255,0.18) !important;
         }}
 
+        /* Select */
         div[data-baseweb="select"] > div {{
             background: {input_bg} !important;
             color: {fg} !important;
@@ -187,11 +219,61 @@ def apply_theme_css(theme: str) -> None:
         }}
         div[data-baseweb="select"] * {{ color: {fg} !important; }}
 
+        /* Tags (multiselect pills) */
         div[data-baseweb="tag"] {{
             background: rgba(90,169,255,0.18) !important;
             border: 1px solid {border} !important;
         }}
         div[data-baseweb="tag"] * {{ color: {fg} !important; }}
+
+        /* ✅ BOTONES (fix de texto invisible en modo claro + mobile) */
+        div[data-testid="stButton"] button,
+        div[data-testid="stDownloadButton"] button,
+        div[data-testid="stFormSubmitButton"] button {{
+            background: {btn_bg} !important;
+            border: 1px solid {btn_border} !important;
+            color: {btn_text} !important;
+            border-radius: 12px !important;
+            font-weight: 800 !important;
+        }}
+        div[data-testid="stButton"] button:hover,
+        div[data-testid="stDownloadButton"] button:hover,
+        div[data-testid="stFormSubmitButton"] button:hover {{
+            background: {btn_hover} !important;
+            color: {btn_text} !important;
+            border-color: {btn_border} !important;
+        }}
+        div[data-testid="stButton"] button * ,
+        div[data-testid="stDownloadButton"] button * ,
+        div[data-testid="stFormSubmitButton"] button * {{
+            color: {btn_text} !important;
+        }}
+
+        /* ✅ FILE UPLOADER (fix "Browse files" invisible en modo claro) */
+        div[data-testid="stFileUploader"] {{
+            color: {fg} !important;
+        }}
+        div[data-testid="stFileUploader"] * {{
+            color: {fg} !important;
+        }}
+        div[data-testid="stFileUploader"] section {{
+            background: {card} !important;
+            border: 1px solid {border} !important;
+            border-radius: 14px !important;
+        }}
+        div[data-testid="stFileUploader"] button {{
+            background: {btn_bg} !important;
+            border: 1px solid {btn_border} !important;
+            color: {btn_text} !important;
+            font-weight: 800 !important;
+            border-radius: 12px !important;
+        }}
+        div[data-testid="stFileUploader"] button * {{
+            color: {btn_text} !important;
+        }}
+
+        /* Radios / checkboxes */
+        div[role="radiogroup"] * {{ color: {fg} !important; }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -317,11 +399,11 @@ def build_pdf(
         ["Título", data_dict["titulo"]],
         ["Disciplina", data_dict["disciplina"]],
         ["Riesgo", data_dict["nivel_riesgo"]],
-        ["Equipo/Área", data_dict["equipo"]],
-        ["Ubicación", data_dict["ubicacion"]],
+        ["Equipo/Área", data_dict["equipo"] or "—"],
+        ["Ubicación", data_dict["ubicacion"] or "—"],
         ["Inspector", data_dict["inspector"]],
         ["Cargo", data_dict["cargo"]],
-        ["OT/Registro", data_dict["registro_ot"]],
+        ["OT/Registro", data_dict["registro_ot"] or "—"],
     ]
 
     t = Table(table_data, colWidths=[42 * mm, 138 * mm])
@@ -371,7 +453,7 @@ def build_pdf(
         )
         story.append(img_table)
 
-    # ✅ Firma: 3x3 cm
+    # ✅ Firma: 3x3 cm (al final)
     if firma_img:
         story.append(Spacer(1, 8))
         sig = RLImage(_img_cover(firma_img[1], SIGN_W_MM, SIGN_H_MM), width=SIGN_W_MM * mm, height=SIGN_H_MM * mm)
@@ -384,9 +466,13 @@ def build_pdf(
 # -----------------------------
 # UI
 # -----------------------------
-st.markdown(f"<h1>{APP_TITLE}</h1><p class='muted'>{APP_SUBTITLE}</p>", unsafe_allow_html=True)
+# ✅ Aplicar CSS al inicio del render (reduce parpadeo y widgets raros)
+apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
+
+st.markdown(f"<h1><i>{APP_TITLE}</i></h1><p class='muted'>{APP_SUBTITLE}</p>", unsafe_allow_html=True)
 
 st.radio("Tema", ["Claro", "Oscuro"], horizontal=True, key=FIELD_KEYS["theme"])
+# Re-aplicar CSS por si cambió el tema (en el rerun quedará estable)
 apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
 
 # Configuración + Limpieza
@@ -462,12 +548,12 @@ st.subheader("Multimedia")
 nonce = st.session_state[UP_NONCE]
 
 fotos_files = (
-    st.file_uploader("Fotos (Máx 3)", type=["jpg", "png"], accept_multiple_files=True, key=f"f_{nonce}")
+    st.file_uploader("Fotos (Máx 3)", type=["jpg", "png", "jpeg"], accept_multiple_files=True, key=f"f_{nonce}")
     if st.session_state[FIELD_KEYS["include_photos"]]
     else None
 )
 firma_file = (
-    st.file_uploader("Firma", type=["jpg", "png"], key=f"s_{nonce}")
+    st.file_uploader("Firma", type=["jpg", "png", "jpeg"], key=f"s_{nonce}")
     if st.session_state[FIELD_KEYS["include_signature"]]
     else None
 )
