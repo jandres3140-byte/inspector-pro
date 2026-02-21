@@ -1,5 +1,6 @@
 import io
 import re
+import uuid
 from datetime import datetime
 from typing import List, Tuple, Optional
 
@@ -32,8 +33,9 @@ APP_TITLE = "jcamp029.pro"
 APP_SUBTITLE = "Generador profesional de informes de inspección técnica (PDF)."
 TZ_CL = ZoneInfo("America/Santiago")
 
-# ✅ Reset robusto (flag + nonce)
-RESET_FLAG = "__do_reset__"
+# Reset hard (definitivo)
+RESET_PARAM = "r"              # query param
+LAST_RESET = "__last_reset__"  # session marker
 UP_NONCE = "__uploader_nonce__"
 
 
@@ -84,31 +86,44 @@ def get_defaults() -> dict:
     }
 
 
-def init_state():
-    defaults = get_defaults()
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+def _get_query_param(name: str) -> str:
+    # Streamlit nuevo
+    try:
+        qp = st.query_params
+        v = qp.get(name, "")
+        if isinstance(v, list):
+            return v[0] if v else ""
+        return v or ""
+    except Exception:
+        # Streamlit viejo
+        try:
+            qp = st.experimental_get_query_params()
+            v = qp.get(name, [""])
+            return v[0] if v else ""
+        except Exception:
+            return ""
 
-    # asegurar reset infra
-    if UP_NONCE not in st.session_state:
-        st.session_state[UP_NONCE] = 0
-    if RESET_FLAG not in st.session_state:
-        st.session_state[RESET_FLAG] = False
+
+def _set_query_param(name: str, value: str) -> None:
+    try:
+        st.query_params[name] = value
+    except Exception:
+        st.experimental_set_query_params(**{name: value})
 
 
-def hard_reset_state():
+def hard_reset_now():
     """
-    ✅ Reset definitivo para Streamlit Cloud:
-    - limpia todo el session_state
-    - incrementa nonce (keys nuevas para uploaders)
+    ✅ Reset definitivo:
+    - borra session_state
+    - incrementa nonce (uploaders cambian de key sí o sí)
     - reinyecta defaults
+    - marca last_reset = query param actual
     """
-    old_nonce = int(st.session_state.get(UP_NONCE, 0))
-    st.session_state.clear()
+    token = _get_query_param(RESET_PARAM) or ""
 
-    st.session_state[UP_NONCE] = old_nonce + 1
-    st.session_state[RESET_FLAG] = False
+    st.session_state.clear()
+    st.session_state[UP_NONCE] = int(st.session_state.get(UP_NONCE, 0)) + 1
+    st.session_state[LAST_RESET] = token
 
     defaults = get_defaults()
     for k, v in defaults.items():
@@ -117,11 +132,24 @@ def hard_reset_state():
     st.rerun()
 
 
-init_state()
+def init_state():
+    if UP_NONCE not in st.session_state:
+        st.session_state[UP_NONCE] = 0
+    if LAST_RESET not in st.session_state:
+        st.session_state[LAST_RESET] = ""
 
-# ✅ si el botón activó reset, lo ejecutamos ANTES de dibujar UI
-if st.session_state.get(RESET_FLAG):
-    hard_reset_state()
+    defaults = get_defaults()
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
+# ✅ Si cambia el query param, resetea (esto “mata” la rehidratación en Cloud)
+token_now = _get_query_param(RESET_PARAM)
+if token_now and token_now != st.session_state.get(LAST_RESET, ""):
+    hard_reset_now()
+
+init_state()
 
 
 # -----------------------------
@@ -244,9 +272,6 @@ def basic_spanish_fixes(text: str):
     return t, changes
 
 
-# -----------------------------
-# Conclusión PRO
-# -----------------------------
 def generate_conclusion_pro(
     disciplina: str,
     nivel_riesgo: str,
@@ -294,9 +319,6 @@ def generate_conclusion_pro(
     return conclusion
 
 
-# -----------------------------
-# PDF helpers
-# -----------------------------
 def _thumb_jpeg_fixed_box(file_bytes: bytes, box_w_mm: float, box_h_mm: float) -> io.BytesIO:
     img = Image.open(io.BytesIO(file_bytes))
     img = ImageOps.exif_transpose(img)
@@ -415,49 +437,39 @@ def build_pdf(
 
     if include_fotos and fotos:
         story.append(Paragraph("Imágenes", h2))
-
         box_w_mm = 55
         box_h_mm = 35
         imgs: List[RLImage] = []
-
         for _, fbytes in fotos[:3]:
-            try:
-                buf = _thumb_jpeg_fixed_box(fbytes, box_w_mm, box_h_mm)
-                im = RLImage(buf, width=box_w_mm * mm, height=box_h_mm * mm)
-                im.hAlign = "CENTER"
-                imgs.append(im)
-            except Exception:
-                story.append(Paragraph("Una imagen no pudo ser procesada.", muted))
+            buf = _thumb_jpeg_fixed_box(fbytes, box_w_mm, box_h_mm)
+            im = RLImage(buf, width=box_w_mm * mm, height=box_h_mm * mm)
+            im.hAlign = "CENTER"
+            imgs.append(im)
 
-        if imgs:
-            img_table = Table([imgs], colWidths=[box_w_mm * mm] * len(imgs))
-            img_table.hAlign = "CENTER"
-            img_table.setStyle(
-                TableStyle(
-                    [
-                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-                        ("TOPPADDING", (0, 0), (-1, -1), 2),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                    ]
-                )
+        img_table = Table([imgs], colWidths=[box_w_mm * mm] * len(imgs))
+        img_table.hAlign = "CENTER"
+        img_table.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ]
             )
-            story.append(img_table)
-            story.append(Spacer(1, 10))
+        )
+        story.append(img_table)
+        story.append(Spacer(1, 10))
 
     if include_firma and firma_img:
         story.append(Paragraph("Firma", h2))
-        try:
-            buf = _thumb_jpeg_fixed_box(firma_img[1], 55, 18)
-            sig = RLImage(buf, width=55 * mm, height=18 * mm)
-            sig.hAlign = "CENTER"
-            story.append(sig)
-            story.append(Spacer(1, 8))
-        except Exception:
-            story.append(Paragraph("No fue posible procesar la imagen de firma.", muted))
-            story.append(Spacer(1, 8))
+        buf = _thumb_jpeg_fixed_box(firma_img[1], 55, 18)
+        sig = RLImage(buf, width=55 * mm, height=18 * mm)
+        sig.hAlign = "CENTER"
+        story.append(sig)
+        story.append(Spacer(1, 8))
 
     doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
     pdf = buffer.getvalue()
@@ -465,9 +477,6 @@ def build_pdf(
     return pdf
 
 
-# -----------------------------
-# Callbacks
-# -----------------------------
 def apply_obs_fix():
     st.session_state[FIELD_KEYS["observaciones_raw"]] = st.session_state.get(
         FIELD_KEYS["obs_fixed_preview"],
@@ -497,9 +506,9 @@ with c2:
 with c3:
     st.checkbox("Mostrar corrección básica", key=FIELD_KEYS["show_correccion"])
 with c4:
-    # ✅ Botón definitivo (sin on_click)
+    # ✅ Botón definitivo: cambia URL + fuerza reset
     if st.button("🧹 Limpiar formulario"):
-        st.session_state[RESET_FLAG] = True
+        _set_query_param(RESET_PARAM, uuid.uuid4().hex)
         st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
@@ -593,7 +602,7 @@ if st.session_state[FIELD_KEYS["include_photos"]]:
         "Subir imágenes (máximo 3) — todas se verán como miniatura del mismo tamaño",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
-        key=f"fotos_{nonce}",  # ✅ clave dinámica
+        key=f"fotos_{nonce}",
     )
 
 if st.session_state[FIELD_KEYS["include_signature"]]:
@@ -601,7 +610,7 @@ if st.session_state[FIELD_KEYS["include_signature"]]:
         "Firma (imagen JPG/PNG) — opcional",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=False,
-        key=f"firma_{nonce}",  # ✅ clave dinámica
+        key=f"firma_{nonce}",
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
