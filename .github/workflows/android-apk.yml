@@ -108,4 +108,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jcamp029pro-apk
-          path: android/bin/*-release*.apk
+          path: android/bin/*.apk
