@@ -12,23 +12,26 @@ requirements = python3,kivy
 orientation = portrait
 fullscreen = 0
 
-# --- ANDROID (debe ir aquí en [app]) ---
-android.api = 33
+# ANDROID
+android.api = 34
 android.minapi = 21
 android.ndk_api = 21
-android.build_tools_version = 33.0.2
+android.build_tools_version = 34.0.0
 
-# Forzar a usar el SDK instalado por el workflow
+# Forzar SDK del workflow (runner)
 android.sdk_path = /home/runner/android-sdk
 
-# Aceptar licencias (si tu versión lo soporta)
-android.accept_sdk_license = True
-
-# Arquitecturas típicas
+# Arquitecturas
 android.archs = arm64-v8a, armeabi-v7a
 
-# AndroidX (útil para compatibilidad)
+# AndroidX
 android.enable_androidx = True
+
+# RELEASE SIGNING (la keystore la genera el workflow)
+android.release_keystore = keystore.jks
+android.release_keyalias = jcamp029
+android.release_keystore_passwd = jcamp029pro
+android.release_keyalias_passwd = jcamp029pro
 
 
 [buildozer]
