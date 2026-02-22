@@ -27,6 +27,9 @@ android.archs = arm64-v8a, armeabi-v7a
 # AndroidX
 android.enable_androidx = True
 
+# Forzar formato de release
+android.release_artifact = apk
+
 # RELEASE SIGNING (la keystore la genera el workflow)
 android.release_keystore = keystore.jks
 android.release_keyalias = jcamp029
