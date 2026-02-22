@@ -103,9 +103,19 @@ jobs:
         run: |
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           buildozer -v android release
+                - name: List APK outputs
+        run: |
+          echo "=== android/bin ==="
+          ls -la android/bin || true
+          echo "=== bin ==="
+          ls -la bin || true
+          echo "=== find apks ==="
+          find . -maxdepth 6 -name "*.apk" -print || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: jcamp029pro-apk
           path: android/bin/*.apk
+            android/*.apk
+            **/*.apk
