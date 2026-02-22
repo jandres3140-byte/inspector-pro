@@ -129,7 +129,6 @@ jobs:
         with:
           name: jcamp029pro-apk
           path: |
-            android/bin/*.apk
-            android/*.apk
+            bin/*.apk
             bin/*.apk
             *.apk
