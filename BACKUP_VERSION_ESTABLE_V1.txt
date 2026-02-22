@@ -1,0 +1,5 @@
+BASE ESTABLE V1
+Fecha: 22-02-2026
+Estado: APK debug funcionando correctamente
+PDF generado OK desde celular
+Sin errores críticos
