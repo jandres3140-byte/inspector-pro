@@ -31,6 +31,7 @@ jobs:
 
       - name: Install system dependencies
         run: |
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             git zip unzip \
@@ -44,6 +45,7 @@ jobs:
 
       - name: Install Android SDK (cmdline-tools) + accept licenses
         run: |
+          set -euxo pipefail
           export ANDROID_SDK_ROOT="$HOME/android-sdk"
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
@@ -55,7 +57,6 @@ jobs:
           mv cmdline-tools latest
 
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-
           yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses
 
           sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --install \
@@ -65,17 +66,20 @@ jobs:
 
       - name: Fix legacy sdkmanager path for Buildozer (tools/bin)
         run: |
+          set -euxo pipefail
           export ANDROID_SDK_ROOT="$HOME/android-sdk"
           mkdir -p "$ANDROID_SDK_ROOT/tools/bin"
           ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_SDK_ROOT/tools/bin/sdkmanager"
 
       - name: Install Buildozer + Cython
         run: |
+          set -euxo pipefail
           python -m pip install --upgrade pip
           pip install buildozer cython==0.29.36
 
       - name: Force Buildozer SDK path (symlink)
         run: |
+          set -euxo pipefail
           export ANDROID_SDK_ROOT="$HOME/android-sdk"
           mkdir -p "$HOME/.buildozer/android/platform"
           rm -rf "$HOME/.buildozer/android/platform/android-sdk"
@@ -83,6 +87,7 @@ jobs:
 
       - name: Generate keystore (for release signing)
         run: |
+          set -euxo pipefail
           cd "$GITHUB_WORKSPACE/android"
           if [ ! -f "keystore.jks" ]; then
             keytool -genkeypair -v \
@@ -95,29 +100,48 @@ jobs:
           fi
           ls -la keystore.jks
 
-      - name: Build APK (release)
+      - name: Build APK (release) + save logs
         env:
           ANDROID_SDK_ROOT: ${{ runner.home }}/android-sdk
           ANDROID_HOME: ${{ runner.home }}/android-sdk
           ANDROIDSDK: ${{ runner.home }}/android-sdk
         run: |
+          set -euxo pipefail
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-          buildozer -v android release
 
-      - name: List APK outputs
-        run: |
-          echo "=== android/bin ==="
-          ls -la android/bin || true
-          echo "=== bin ==="
+          echo "=== Running buildozer release ==="
+          buildozer -v android release 2>&1 | tee buildozer_release.log
+
+          echo "=== List outputs (android/) ==="
+          echo "PWD=$(pwd)"
+          ls -la || true
+          echo "--- bin/ ---"
           ls -la bin || true
-          echo "=== find apks ==="
-          find . -maxdepth 6 -name "*.apk" -print || true
+          echo "--- android/bin (from repo root would be android/bin) ---"
+          ls -la ./bin || true
 
-      - name: Upload APK artifact
+          echo "=== Find APK/AAB ==="
+          find . -maxdepth 8 \( -name "*.apk" -o -name "*.aab" \) -print | tee found_packages.txt
+
+          echo "=== Fail if no package was produced ==="
+          if ! grep -E '\.(apk|aab)$' found_packages.txt >/dev/null 2>&1; then
+            echo "No .apk/.aab produced. Failing the job so we can see it clearly."
+            exit 1
+          fi
+
+      - name: Upload build logs (always)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: jcamp029pro-apk
+          name: build-logs
           path: |
-            android/bin/*.apk
-            android/*.apk
-            **/*.apk
+            android/buildozer_release.log
+            android/found_packages.txt
+
+      - name: Upload package (APK/AAB)
+        uses: actions/upload-artifact@v4
+        with:
+          name: jcamp029pro-package
+          path: |
+            android/**/*.apk
+            android/**/*.aab
