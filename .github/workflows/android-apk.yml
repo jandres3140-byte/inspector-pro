@@ -59,7 +59,7 @@ jobs:
 
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
-          # Aceptar licencias sin que falle por "Broken pipe" (yes -> SIGPIPE) con pipefail
+          # Aceptar licencias sin que falle por "Broken pipe" con pipefail
           set +o pipefail
           yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
           set -o pipefail
@@ -115,20 +115,21 @@ jobs:
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           buildozer -v android release
 
-      - name: List APK outputs
+      - name: List build outputs (apk/aab)
         run: |
           set -euxo pipefail
           echo "PWD=$(pwd)"
-          echo "=== bin/ ==="
+          echo "=== bin/ (direct) ==="
           ls -la bin || true
-          echo "=== find apks ==="
-          find . -maxdepth 6 -name "*.apk" -print || true
+          echo "=== find (apk/aab) ==="
+          find . -maxdepth 10 \( -name "*.apk" -o -name "*.aab" \) -print || true
 
-      - name: Upload APK artifact
+      - name: Upload Android artifact (apk/aab)
         uses: actions/upload-artifact@v4
         with:
-          name: jcamp029pro-apk
+          name: jcamp029pro-android-build
           path: |
             bin/*.apk
-            bin/*.apk
-            *.apk
+            bin/*.aab
+            **/*.apk
+            **/*.aab
