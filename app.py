@@ -819,6 +819,34 @@ if st.session_state.get(FIELD_KEYS["show_correccion"], True):
         if st.button("Aplicar corrección", use_container_width=True):
             apply_obs_fix()
 
+   # Observaciones + corrección
+st.text_area(
+    "Observaciones",
+    key=FIELD_KEYS["observaciones_raw"],
+    height=170,
+    placeholder="Describe hallazgos, condición, ubicación exacta, etc."
+)
+
+if st.session_state.get(FIELD_KEYS["show_correccion"], True):
+
+    b1, b2 = st.columns([1, 1])
+
+    with b1:
+        if st.button("Corrección técnica (solo Observaciones)", use_container_width=True):
+            fixed, logs = technical_spanish_fixes(
+                st.session_state.get(FIELD_KEYS["observaciones_raw"], "")
+            )
+            st.session_state[FIELD_KEYS["obs_fixed_preview"]] = fixed
+
+            if logs:
+                st.caption("Cambios: " + " | ".join(logs))
+            else:
+                st.caption("Sin cambios detectados.")
+
+    with b2:
+        if st.button("Aplicar corrección", use_container_width=True):
+            apply_obs_fix()
+
     if (st.session_state.get(FIELD_KEYS["obs_fixed_preview"], "") or "").strip():
         st.text_area(
             "Vista previa corregida",
