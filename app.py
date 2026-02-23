@@ -301,6 +301,12 @@ def _recommended_title_name(name: str) -> str:
 
 
 def _has_obvious_caps_issue(name: str) -> bool:
+    """
+    Detecta SOLO problemas reales:
+    - todo en minúsculas
+    - mezcla rara tipo "JOrGe"
+    IMPORTANTE: MAYÚSCULAS completas ya NO se consideran problema (en informes es común).
+    """
     s = (name or "").strip()
     if not s:
         return False
@@ -311,8 +317,10 @@ def _has_obvious_caps_issue(name: str) -> bool:
 
     if all(ch.islower() for ch in letters):
         return True
-    if all(ch.isupper() for ch in letters):
-        return True
+
+    # ✅ ya NO marcamos "todo en MAYÚSCULAS" como problema
+    # if all(ch.isupper() for ch in letters):
+    #     return True
 
     words = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", s)
     for w in words:
@@ -414,20 +422,12 @@ def apply_obs_fix():
 # Auto-conclusión (prioriza Observaciones por FRASES EXACTAS)
 # -----------------------------
 def _normalize_for_exact_phrase_match(s: str) -> str:
-    """
-    Normaliza para comparar 'frases exactas' de forma estable:
-    - minúsculas
-    - espacios colapsados
-    - sin tildes
-    """
     s = normalize_spaces(s or "").lower()
     s = strip_accents(s)
     return s
 
 
-# Frases EXACTAS (cortas) -> NO se repiten textual en la conclusión (se paraphrasea)
 PHRASE_RULES = [
-    # --- Eléctrico
     {
         "phrase": "luminaria suelta",
         "disc": ["Eléctrica", "Otra"],
@@ -470,8 +470,6 @@ PHRASE_RULES = [
         "action": "implementar y verificar control LOTO antes de intervenir",
         "priority": 11,
     },
-
-    # --- Mecánico
     {
         "phrase": "fuga de aceite",
         "disc": ["Mecánica", "Otra"],
@@ -486,8 +484,6 @@ PHRASE_RULES = [
         "action": "restituir resguardo y asegurar integridad de protecciones",
         "priority": 10,
     },
-
-    # --- Instrumental
     {
         "phrase": "señal inestable",
         "disc": ["Instrumental", "Otra"],
@@ -495,8 +491,6 @@ PHRASE_RULES = [
         "action": "verificar conexiones, calibrar y normalizar señal de proceso",
         "priority": 9,
     },
-
-    # --- Civil
     {
         "phrase": "baranda suelta",
         "disc": ["Civil", "Otra"],
@@ -515,9 +509,6 @@ PHRASE_RULES = [
 
 
 def _match_phrases_from_observations(obs_text: str, disciplina: str) -> List[dict]:
-    """
-    Encuentra frases EXACTAS (en texto normalizado) y devuelve reglas ordenadas por prioridad.
-    """
     obs_n = _normalize_for_exact_phrase_match(obs_text)
     d = (disciplina or "Otra").strip()
 
@@ -558,9 +549,6 @@ def _prevent_text(nivel: str) -> str:
 
 
 def _fallback_conclusion_by_hallazgos(disciplina: str, nivel_riesgo: str, hallazgos: List[str]) -> str:
-    """
-    Respaldo corto y no redundante (máx 2 causas/2 acciones) basado en Hallazgos.
-    """
     d = (disciplina or "Otra").strip()
     r = (nivel_riesgo or "Medio").strip()
     hs = [h.strip() for h in (hallazgos or []) if (h or "").strip()]
@@ -613,12 +601,6 @@ def _fallback_conclusion_by_hallazgos(disciplina: str, nivel_riesgo: str, hallaz
 
 
 def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: List[str], observaciones: str) -> str:
-    """
-    1) Prioriza Observaciones con frases EXACTAS (cortas).
-       - NO repite esas frases textual: usa cause/action paraphraseadas.
-       - Toma máximo 2 reglas.
-    2) Si no hay match, cae a respaldo por Hallazgos (corto).
-    """
     d = (disciplina or "Otra").strip()
     r = (nivel_riesgo or "Medio").strip()
     obs = (observaciones or "").strip()
@@ -629,7 +611,6 @@ def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: Lis
     if obs:
         hits = _match_phrases_from_observations(obs, d)
         if hits:
-            # toma máximo 2, sin repetir cause/action
             causes, actions = [], []
             for h in hits:
                 c = (h.get("cause") or "").strip()
@@ -641,7 +622,6 @@ def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: Lis
                 if len(causes) >= 2 and len(actions) >= 2:
                     break
 
-            # seguridad
             if not causes or not actions:
                 return _fallback_conclusion_by_hallazgos(d, r, hallazgos)
 
@@ -662,9 +642,6 @@ def compute_auto_hash() -> str:
 
 
 def sync_auto_conclusion_force():
-    """
-    Genera/actualiza conclusión automáticamente (solo cuando el usuario lo pide o al generar PDF).
-    """
     if not st.session_state.get(FIELD_KEYS["auto_conclusion"], True):
         return
     if st.session_state.get(FIELD_KEYS["conclusion_locked"], False):
@@ -901,14 +878,12 @@ with cB:
     st.text_input("Ubicación", key=FIELD_KEYS["ubicacion"])
     st.text_input("Cargo", key=FIELD_KEYS["cargo"])
 
-# Advertencia NO bloqueante por capitalización rara en Inspector
+# ✅ Sugerencia discreta (sin caja amarilla grande)
 _ins = st.session_state.get(FIELD_KEYS["inspector"], "")
 if _has_obvious_caps_issue(_ins):
     sugg = _recommended_title_name(_ins)
     if sugg and sugg != _ins.strip():
-        st.warning(f"⚠️ Revisa capitalización del nombre. Sugerido: {sugg}")
-    else:
-        st.warning("⚠️ Revisa capitalización del nombre (posible mezcla de mayúsculas/minúsculas).")
+        st.caption(f"⚠️ Sugerido: {sugg}")
 
 st.text_input("N° Registro/OT", key=FIELD_KEYS["registro_ot"])
 
@@ -943,7 +918,7 @@ if st.session_state[FIELD_KEYS["show_correccion"]]:
         st.text_area("Sugerencia", key=FIELD_KEYS["obs_fixed_preview"], height=90)
         st.button("Aplicar sugerencias", on_click=apply_obs_fix)
 
-# Auto / Manual (✅ ya NO se autogenera sola)
+# Auto / Manual
 st.checkbox("Auto", key=FIELD_KEYS["auto_conclusion"])
 
 cX, cY = st.columns(2)
@@ -983,7 +958,6 @@ if st.button("Generar PDF Profesional ✅", use_container_width=True):
     fotos = [(f.name, f.read()) for f in (fotos_files or [])[:3]]
     firma = (firma_file.name, firma_file.read()) if firma_file else None
 
-    # ✅ Si está en Auto, no está en Manual y está vacío, se genera al momento de exportar
     if st.session_state.get(FIELD_KEYS["auto_conclusion"], True) and not st.session_state.get(FIELD_KEYS["conclusion_locked"], False):
         if not (st.session_state.get(FIELD_KEYS["conclusion"], "").strip()):
             sync_auto_conclusion_force()
