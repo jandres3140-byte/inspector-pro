@@ -255,7 +255,7 @@ def apply_theme_css(theme: str) -> None:
             color: {btn_text} !important;
         }}
 
-        /* File Uploader (Browse files visible) */
+        /* File Uploader */
         div[data-testid="stFileUploader"] {{ color: {fg} !important; }}
         div[data-testid="stFileUploader"] * {{ color: {fg} !important; }}
         div[data-testid="stFileUploader"] section {{
@@ -299,13 +299,16 @@ def _has_obvious_caps_issue(name: str) -> bool:
     s = (name or "").strip()
     if not s:
         return False
+
     letters = [ch for ch in s if ch.isalpha()]
     if not letters:
         return False
+
     if all(ch.islower() for ch in letters):
         return True
     if all(ch.isupper() for ch in letters):
         return True
+
     words = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", s)
     for w in words:
         if len(w) >= 2 and w[0].isupper():
@@ -340,6 +343,7 @@ def match_case(original: str, replacement: str) -> str:
 TECH_WORDS = {
     "aseo": "aseo",
     "area": "área",
+    "medicion": "medición",
     "tecnico": "técnico",
     "tecnica": "técnica",
     "inspeccion": "inspección",
@@ -360,7 +364,6 @@ TECH_WORDS = {
     "mecanico": "mecánico",
     "mecanica": "mecánica",
     "instrumentacion": "instrumentación",
-    "medicion": "medición",  # ✅ caso real tuyo
     "epp": "EPP",
 }
 
@@ -403,73 +406,117 @@ def apply_obs_fix():
 
 
 # -----------------------------
-# Auto-conclusión 2.0 (compacta, contextual, 2 frases)
-# - NO repite nivel de riesgo (ya va en tabla)
-# - Usa Disciplina + Hallazgos + palabras clave en Observaciones
+# Auto-conclusión (compacta, sin repetir riesgo)
 # -----------------------------
-def _tokenize(text: str) -> set:
-    s = strip_accents((text or "").lower())
-    s = re.sub(r"[^a-z0-9áéíóúüñ\s\-]", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    if not s:
-        return set()
-    return set(s.split(" "))
+def generate_conclusion_compact(disciplina: str, nivel_riesgo: str, hallazgos: List[str]) -> str:
+    prioridad = "inmediata" if nivel_riesgo == "Alto" else "programada" if nivel_riesgo == "Medio" else "rutinaria"
+    hall = ", ".join(hallazgos) if hallazgos else "General"
+    # ✅ sin "Acción:" para que no quede colgando
+    return f"{disciplina}. Prioridad {prioridad}. Hallazgos: {hall}. Corregir según prioridad."
 
 
-def _compact_join(items: List[str], max_items: int = 2) -> str:
-    items = [x for x in items if x]
-    if not items:
-        return ""
-    items = items[:max_items]
-    return " y ".join(items) if len(items) == 2 else items[0]
+def compute_auto_hash() -> str:
+    d = st.session_state.get(FIELD_KEYS["disciplina"], "")
+    r = st.session_state.get(FIELD_KEYS["nivel_riesgo"], "")
+    h = ",".join(st.session_state.get(FIELD_KEYS["hallazgos"], []) or [])
+    return f"{d}|{r}|{h}"
 
 
-def _limit_len(text: str, max_len: int) -> str:
-    t = (text or "").strip()
-    if len(t) <= max_len:
-        return t
-    t = t[: max_len - 1].rstrip()
-    return t + "…"
+def sync_auto_conclusion_if_needed():
+    if not st.session_state.get(FIELD_KEYS["auto_conclusion"], True):
+        return
+    if st.session_state.get(FIELD_KEYS["conclusion_locked"], False):
+        return
+
+    current_hash = compute_auto_hash()
+    last_hash = st.session_state.get(FIELD_KEYS["last_auto_hash"], "")
+
+    if current_hash != last_hash or not (st.session_state.get(FIELD_KEYS["conclusion"], "").strip()):
+        st.session_state[FIELD_KEYS["conclusion"]] = generate_conclusion_compact(
+            st.session_state.get(FIELD_KEYS["disciplina"], "Otra"),
+            st.session_state.get(FIELD_KEYS["nivel_riesgo"], "Medio"),
+            st.session_state.get(FIELD_KEYS["hallazgos"], []),
+        )
+        st.session_state[FIELD_KEYS["last_auto_hash"]] = current_hash
 
 
-def generate_conclusion_auto_v2(disciplina: str, hallazgos: List[str], observaciones: str) -> str:
-    disc = (disciplina or "Otra").strip()
-    hall = hallazgos or []
-    obs = observaciones or ""
-    tokens = _tokenize(obs)
+# -----------------------------
+# Imágenes (COVER)
+# -----------------------------
+def _img_cover(file_bytes: bytes, w_mm: float, h_mm: float) -> io.BytesIO:
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
+    box_px_w = 1500
+    box_px_h = max(1, int(box_px_w * (h_mm / w_mm)))
 
-    # Señales comunes
-    has_loto = "loto" in tokens
-    has_tablero = any(t in tokens for t in ["tablero", "tableros", "gabinete", "gabinetes"])
-    has_polvo = any(t in tokens for t in ["polvo", "conductor", "conductivo", "conductora", "conductores"])
-    has_abierto = any(t in tokens for t in ["abierto", "abiertos", "abierta", "abiertas"])
-    has_aseo = any(t in tokens for t in ["aseo", "limpieza", "sucio", "sucia", "orden"])
-    has_senal = any(t in tokens for t in ["senalizacion", "señalizacion", "senal", "señal"])
-    has_epp = "epp" in tokens
+    scale = max(box_px_w / img.width, box_px_h / img.height)
+    img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
 
-    # Causas / acciones por disciplina
-    causa = ""
-    accion = ""
-    prevencion = ""
+    left = (img.width - box_px_w) // 2
+    top = (img.height - box_px_h) // 2
+    img = img.crop((left, top, left + box_px_w, top + box_px_h))
 
-    if disc == "Eléctrica":
-        causas = []
-        acciones = []
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    buf.seek(0)
+    return buf
 
-        if has_tablero:
-            causas.append("condiciones deficientes en tableros/gabinetes")
-        if has_abierto and has_tablero:
-            causas.append("tableros abiertos")
-        if has_loto or ("LOTO" in hall) or ("Loto" in hall):
-            causas.append("ausencia de control LOTO")
-        if has_polvo:
-            causas.append("presencia de polvo conductor")
-        if ("Orden y limpieza" in hall) or has_aseo:
-            causas.append("orden y limpieza deficientes")
-        if not causas and hall:
-            causas.append("condiciones observadas en la inspección")
 
-        # Acciones recomendadas (compactas)
-        if has_loto or ("LOTO" in hall) or ("Loto" in hall):
-            acciones.append("implementar y verificar LOTO")
-        if has_tablero:
+# -----------------------------
+# PDF
+# -----------------------------
+def build_pdf(
+    data_dict: dict,
+    fotos: List[Tuple[str, bytes]],
+    firma_img: Optional[Tuple[str, bytes]],
+) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, margin=15 * mm)
+    styles = getSampleStyleSheet()
+
+    story = [
+        Paragraph("INFORME TÉCNICO DE INSPECCIÓN", styles["Heading1"]),
+        Spacer(1, 8),
+    ]
+
+    table_data = [
+        ["Fecha", data_dict["fecha"]],
+        ["Título", data_dict["titulo"]],
+        ["Disciplina", data_dict["disciplina"]],
+        ["Riesgo", data_dict["nivel_riesgo"]],
+        ["Equipo/Área", data_dict["equipo"] or "—"],
+        ["Ubicación", data_dict["ubicacion"] or "—"],
+        ["Inspector", data_dict["inspector"]],
+        ["Cargo", data_dict["cargo"]],
+        ["OT/Registro", data_dict["registro_ot"] or "—"],
+    ]
+
+    t = Table(table_data, colWidths=[42 * mm, 138 * mm])
+    t.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.extend([t, Spacer(1, 10)])
+
+    story.append(Paragraph("Observaciones", styles["Heading2"]))
+    story.append(Paragraph(escape(data_dict["observaciones"]).replace("\n", "<br/>"), styles["BodyText"]))
+    story.append(Spacer(1, 8))
+
+    story.append(Paragraph("Conclusión", styles["Heading2"]))
+    story.append(Paragraph(escape(data_dict["conclusion"]).replace("\n", "<br/>"), styles["BodyText"]))
+    story.append(Spacer(1, 8))
+
+    if fotos:
+        story.append(Paragraph("Imágenes", styles["Heading2"]))
+        use = fotos[:3]
+        n = len(use)
+
+        img_w_mm = TOTAL_IMG_W_MM / n
+        img_h_mm = TOTAL_IMG_H_MM
+
+        imgs = [
+            RLImage(_img_cover(b, img_w_mm, img_h_mm), width=img_w_mm * mm, height=img_h_mm * mm)
