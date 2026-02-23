@@ -280,7 +280,62 @@ def apply_theme_css(theme: str) -> None:
 
 
 # -----------------------------
-# Corrección técnica (A)
+# Recomendación NO bloqueante para Nombres (Inspector)
+# -----------------------------
+def _recommended_title_name(name: str) -> str:
+    """
+    Recomendación suave (no autocorrige el campo):
+    - Normaliza espacios
+    - Title-case por palabras y separadores comunes
+    """
+    s = (name or "").strip()
+    s = re.sub(r"\s+", " ", s)
+
+    # separadores que queremos preservar
+    parts = re.split(r"([ \-’'`])", s)
+    out = []
+    for p in parts:
+        if p in {" ", "-", "’", "'", "`"} or p == "":
+            out.append(p)
+            continue
+        # Para tokens con letras, title() es una recomendación razonable
+        # (no es corrección legal del nombre).
+        out.append(p[:1].upper() + p[1:].lower() if p.isalpha() else p)
+    return "".join(out).strip()
+
+
+def _has_obvious_caps_issue(name: str) -> bool:
+    """
+    Detecta patrones "obvios" de capitalización:
+    - todo en minúsculas
+    - todo en MAYÚSCULAS
+    - mayúscula rara tipo "JOrge" (segunda letra mayúscula o mezcla extraña)
+    """
+    s = (name or "").strip()
+    if not s:
+        return False
+
+    letters = [ch for ch in s if ch.isalpha()]
+    if not letters:
+        return False
+
+    if all(ch.islower() for ch in letters):
+        return True
+    if all(ch.isupper() for ch in letters):
+        return True
+
+    # mezcla rara por palabra
+    words = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", s)
+    for w in words:
+        if len(w) >= 2 and w[0].isupper():
+            # Si hay una mayúscula inesperada después del primer char (y no es todo mayúsculas)
+            if any(ch.isupper() for ch in w[1:]) and not w.isupper():
+                return True
+    return False
+
+
+# -----------------------------
+# Corrección técnica (A) - solo Observaciones
 # -----------------------------
 def normalize_spaces(text: str) -> str:
     text = text or ""
@@ -320,6 +375,8 @@ TECH_WORDS = {
     "mantenimiento": "mantenimiento",
     "electrico": "eléctrico",
     "electrica": "eléctrica",
+    "electricos": "eléctricos",
+    "electricas": "eléctricas",
     "mecanico": "mecánico",
     "mecanica": "mecánica",
     "instrumentacion": "instrumentación",
@@ -626,12 +683,32 @@ with cB:
     st.text_input("Ubicación", key=FIELD_KEYS["ubicacion"])
     st.text_input("Cargo", key=FIELD_KEYS["cargo"])
 
+# Advertencia NO bloqueante por capitalización rara en Inspector
+_ins = st.session_state.get(FIELD_KEYS["inspector"], "")
+if _has_obvious_caps_issue(_ins):
+    sugg = _recommended_title_name(_ins)
+    if sugg and sugg != _ins.strip():
+        st.warning(f"⚠️ Revisa capitalización del nombre. Sugerido: {sugg}")
+    else:
+        st.warning("⚠️ Revisa capitalización del nombre (posible mezcla de mayúsculas/minúsculas).")
+
 st.text_input("N° Registro/OT", key=FIELD_KEYS["registro_ot"])
-st.multiselect(
-    "Hallazgos",
-    ["Condición insegura", "Orden y limpieza", "LOTO", "Tableros", "Otros"],
-    key=FIELD_KEYS["hallazgos"],
-)
+
+# Hallazgos (placeholder en español cuando la versión de Streamlit lo soporte)
+try:
+    st.multiselect(
+        "Hallazgos",
+        ["Condición insegura", "Orden y limpieza", "LOTO", "Tableros", "Otros"],
+        key=FIELD_KEYS["hallazgos"],
+        placeholder="Seleccione opciones",
+    )
+except TypeError:
+    # Fallback para versiones antiguas sin placeholder
+    st.multiselect(
+        "Hallazgos",
+        ["Condición insegura", "Orden y limpieza", "LOTO", "Tableros", "Otros"],
+        key=FIELD_KEYS["hallazgos"],
+    )
 
 st.text_area("Observaciones", height=120, key=FIELD_KEYS["observaciones_raw"])
 
@@ -642,6 +719,7 @@ if st.session_state[FIELD_KEYS["show_correccion"]]:
         st.session_state[FIELD_KEYS["obs_fixed_preview"]] = fixed
         if changes:
             st.info("Cambios: " + " | ".join(changes))
+            st.info("Tip: para que se aplique en el PDF, presiona “Aplicar sugerencias”.")
         else:
             st.info("Sin cambios detectados.")
     if st.session_state.get(FIELD_KEYS["obs_fixed_preview"], "").strip():
