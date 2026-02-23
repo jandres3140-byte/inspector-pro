@@ -1,11 +1,13 @@
 import io
 import re
 import unicodedata
+import base64
 from collections import Counter
 from datetime import datetime
 from typing import List, Tuple, Optional
 
 import streamlit as st
+import streamlit.components.v1 as components
 from zoneinfo import ZoneInfo
 
 from reportlab.lib import colors
@@ -66,6 +68,11 @@ FIELD_KEYS = {
 
     "conclusion_locked": "conclusion_locked",
     "last_auto_hash": "last_auto_hash",
+
+    # PDF generado (para descargar/compartir sin perderlo en reruns)
+    "last_pdf_bytes": "last_pdf_bytes",
+    "last_pdf_name": "last_pdf_name",
+    "last_pdf_token": "last_pdf_token",
 }
 
 
@@ -95,6 +102,10 @@ def get_defaults() -> dict:
 
         FIELD_KEYS["conclusion_locked"]: False,
         FIELD_KEYS["last_auto_hash"]: "",
+
+        FIELD_KEYS["last_pdf_bytes"]: None,
+        FIELD_KEYS["last_pdf_name"]: "",
+        FIELD_KEYS["last_pdf_token"]: "",
     }
 
 
@@ -280,25 +291,18 @@ def normalize_spaces(text: str) -> str:
 
 
 def strip_accents(s: str) -> str:
-    # Quita diacríticos sin cambiar letras (á -> a, ü -> u, ñ se mantiene como ñ en NFD?).
-    # Nota: ñ al descomponer queda n + ~, por lo que aquí queda "n".
-    # Para corrección técnica es aceptable porque comparamos “sin acentos”.
     return "".join(ch for ch in unicodedata.normalize("NFD", s) if unicodedata.category(ch) != "Mn")
 
 
 def match_case(original: str, replacement: str) -> str:
-    # Respeta el estilo del token original
     if original.isupper():
         return replacement.upper()
     if len(original) > 1 and original[0].isupper() and original[1:].islower():
-        # Title case simple
         return replacement[:1].upper() + replacement[1:].lower()
     return replacement
 
 
-# Diccionario técnico controlado (dominio inspección)
 TECH_WORDS = {
-    # núcleo
     "aseo": "aseo",
     "area": "área",
     "tecnico": "técnico",
@@ -314,56 +318,36 @@ TECH_WORDS = {
     "senalizacion": "señalización",
     "proteccion": "protección",
     "mantenimiento": "mantenimiento",
-
-    # disciplina
     "electrico": "eléctrico",
     "electrica": "eléctrica",
     "mecanico": "mecánico",
     "mecanica": "mecánica",
     "instrumentacion": "instrumentación",
-
-    # siglas comunes
     "epp": "EPP",
 }
 
-# Pre-cálculo: key sin acentos -> palabra correcta
 TECH_MAP = {strip_accents(k).lower(): v for k, v in TECH_WORDS.items()}
 
 
 def technical_spanish_fixes(text: str):
-    """
-    Corrector técnico:
-    - Normaliza espacios
-    - Corrige SOLO un set controlado de palabras (con y sin tildes mal puestas)
-    - Respeta estilo (mayúsculas / título / minúsculas)
-    - Entrega logs con conteo
-    """
     t = normalize_spaces(text or "")
     changes_counter = Counter()
-
-    # Tokenizador: solo palabras (no números), incluyendo letras con tildes
     word_re = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+")
 
     def repl(m: re.Match) -> str:
         w = m.group(0)
-
-        # Protecciones: si contiene dígitos, no tocar (aunque no debería entrar)
         if any(ch.isdigit() for ch in w):
             return w
-
         key = strip_accents(w).lower()
-
         if key in TECH_MAP:
             new_word = match_case(w, TECH_MAP[key])
             if new_word != w:
                 changes_counter[f"{w} → {new_word}"] += 1
             return new_word
-
         return w
 
     t2 = word_re.sub(repl, t)
 
-    # Capitalización inicial (sin tocar el resto)
     logs = []
     if t2 and t2[0].islower():
         t2 = t2[0].upper() + t2[1:]
@@ -485,7 +469,6 @@ def build_pdf(
     story.append(Paragraph(escape(data_dict["conclusion"]).replace("\n", "<br/>"), styles["BodyText"]))
     story.append(Spacer(1, 8))
 
-    # Imágenes: 1 fila horizontal (máx 15x6 cm)
     if fotos:
         story.append(Paragraph("Imágenes", styles["Heading2"]))
         use = fotos[:3]
@@ -512,7 +495,6 @@ def build_pdf(
         )
         story.append(img_table)
 
-    # Firma: 3x3 cm (al final)
     if firma_img:
         story.append(Spacer(1, 8))
         sig = RLImage(_img_cover(firma_img[1], SIGN_W_MM, SIGN_H_MM), width=SIGN_W_MM * mm, height=SIGN_H_MM * mm)
@@ -520,6 +502,86 @@ def build_pdf(
 
     doc.build(story)
     return buffer.getvalue()
+
+
+# -----------------------------
+# Compartir (Web Share API) para móvil
+# -----------------------------
+def render_share_button(pdf_bytes: bytes, filename: str, token: str) -> None:
+    """
+    Botón 'Compartir PDF' usando Web Share API.
+    - En Android (Chrome) abre WhatsApp/Drive/Correo/etc.
+    - En PC si no existe navigator.share, muestra aviso.
+    """
+    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    safe_name = (filename or "informe.pdf").replace('"', "").replace("'", "")
+
+    html = f"""
+    <div style="width:100%; margin-top: 10px;">
+      <button id="shareBtn_{token}"
+        style="
+          width:100%;
+          padding: 0.6rem 0.9rem;
+          border-radius: 12px;
+          border: 1px solid #CBD5E1;
+          background: white;
+          font-weight: 800;
+          cursor: pointer;">
+        📤 Compartir PDF
+      </button>
+      <div id="shareMsg_{token}" style="margin-top:8px; font-size: 0.9rem;"></div>
+    </div>
+
+    <script>
+      (function() {{
+        const btn = document.getElementById("shareBtn_{token}");
+        const msg = document.getElementById("shareMsg_{token}");
+        const b64 = "{b64}";
+        const filename = "{safe_name}";
+
+        function b64ToUint8Array(base64) {{
+          const binary_string = atob(base64);
+          const len = binary_string.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {{
+            bytes[i] = binary_string.charCodeAt(i);
+          }}
+          return bytes;
+        }}
+
+        async function sharePdf() {{
+          try {{
+            if (!navigator.share) {{
+              msg.innerHTML = "⚠️ Tu navegador no permite compartir directo. Usa 'Descargar Informe'.";
+              return;
+            }}
+            const bytes = b64ToUint8Array(b64);
+            const blob = new Blob([bytes], {{ type: "application/pdf" }});
+            const file = new File([blob], filename, {{ type: "application/pdf" }});
+
+            const data = {{
+              title: "Informe PDF",
+              text: "Informe generado en jcamp029.pro",
+              files: [file]
+            }};
+
+            if (navigator.canShare && !navigator.canShare(data)) {{
+              msg.innerHTML = "⚠️ No se puede compartir archivo aquí. Descarga el PDF y compártelo manual.";
+              return;
+            }}
+
+            await navigator.share(data);
+            msg.innerHTML = "✅ Compartido.";
+          }} catch (e) {{
+            msg.innerHTML = "⚠️ Compartir cancelado o no disponible.";
+          }}
+        }}
+
+        btn.addEventListener("click", sharePdf);
+      }})();
+    </script>
+    """
+    components.html(html, height=120)
 
 
 # -----------------------------
@@ -642,11 +704,27 @@ if st.button("Generar PDF Profesional ✅", use_container_width=True):
     }
 
     pdf_output = build_pdf(datos, fotos, firma)
+    fname = f"informe_{datetime.now(TZ_CL).strftime('%H%M%S')}.pdf"
 
+    st.session_state[FIELD_KEYS["last_pdf_bytes"]] = pdf_output
+    st.session_state[FIELD_KEYS["last_pdf_name"]] = fname
+    st.session_state[FIELD_KEYS["last_pdf_token"]] = datetime.now(TZ_CL).strftime("%Y%m%d%H%M%S%f")
+
+    st.success("PDF generado ✅ (ya puedes descargar o compartir).")
+
+# Acciones (descargar + compartir) usando el último PDF generado
+last_pdf = st.session_state.get(FIELD_KEYS["last_pdf_bytes"], None)
+last_name = st.session_state.get(FIELD_KEYS["last_pdf_name"], "")
+last_token = st.session_state.get(FIELD_KEYS["last_pdf_token"], "")
+
+if last_pdf:
     st.download_button(
         "Descargar Informe",
-        data=pdf_output,
-        file_name=f"informe_{datetime.now(TZ_CL).strftime('%H%M%S')}.pdf",
+        data=last_pdf,
+        file_name=last_name or f"informe_{datetime.now(TZ_CL).strftime('%H%M%S')}.pdf",
         mime="application/pdf",
         use_container_width=True,
     )
+
+    # Compartir (en móviles compatibles)
+    render_share_button(last_pdf, last_name or "informe.pdf", last_token or "share")
