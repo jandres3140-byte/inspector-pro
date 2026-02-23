@@ -69,7 +69,6 @@ FIELD_KEYS = {
     "conclusion_locked": "conclusion_locked",
     "last_auto_hash": "last_auto_hash",
 
-    # PDF
     "last_pdf_bytes": "last_pdf_bytes",
     "last_pdf_name": "last_pdf_name",
     "last_pdf_token": "last_pdf_token",
@@ -115,7 +114,7 @@ def init_state():
 
     defaults = get_defaults()
 
-    # ✅ abrir siempre en CLARO al inicio de la sesión
+    # abrir siempre en CLARO al inicio de la sesión, permitir cambiar luego
     if not st.session_state.get(FIELD_KEYS["theme_initialized"], False):
         st.session_state[FIELD_KEYS["theme"]] = "Claro"
         st.session_state[FIELD_KEYS["theme_initialized"]] = True
@@ -126,7 +125,7 @@ def init_state():
 
 
 def hard_reset_now():
-    """Reset definitivo preservando el tema actual."""
+    """Reset definitivo del formulario preservando el tema actual."""
     current_theme = st.session_state.get(FIELD_KEYS["theme"], "Claro")
 
     for key in list(st.session_state.keys()):
@@ -193,12 +192,6 @@ def apply_theme_css(theme: str) -> None:
             border-radius: 14px;
             padding: 16px;
             margin-bottom: 16px;
-        }}
-        .app-card:empty {{
-            display: none !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            border: 0 !important;
         }}
 
         input, textarea {{
@@ -277,7 +270,7 @@ def apply_theme_css(theme: str) -> None:
 
 
 # -----------------------------
-# Recomendación NO bloqueante para nombres (Inspector)
+# Recomendación NO bloqueante para Nombres (Inspector)
 # -----------------------------
 def _recommended_title_name(name: str) -> str:
     s = (name or "").strip()
@@ -315,7 +308,7 @@ def _has_obvious_caps_issue(name: str) -> bool:
 
 
 # -----------------------------
-# Corrección técnica (solo Observaciones)
+# Corrección técnica (A) - solo Observaciones
 # -----------------------------
 def normalize_spaces(text: str) -> str:
     text = text or ""
@@ -360,7 +353,7 @@ TECH_WORDS = {
     "mecanico": "mecánico",
     "mecanica": "mecánica",
     "instrumentacion": "instrumentación",
-    "medicion": "medición",  # ✅ tu caso
+    "medicion": "medición",   # ✅ tu caso
     "epp": "EPP",
 }
 
@@ -403,20 +396,83 @@ def apply_obs_fix():
 
 
 # -----------------------------
-# Auto-conclusión (simple, estable)
+# Auto-conclusión (compacta)
 # -----------------------------
-def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: List[str]) -> str:
-    prioridad = "inmediata" if nivel_riesgo == "Alto" else "programada" if nivel_riesgo == "Medio" else "rutinaria"
-    hall = ", ".join(hallazgos) if hallazgos else "General"
-    # ✅ sin “Acción:” para que no quede colgando
-    return f"{disciplina}: Prioridad {prioridad}. Hallazgos: {hall}. Corregir según prioridad."
-
-
 def compute_auto_hash() -> str:
     d = st.session_state.get(FIELD_KEYS["disciplina"], "")
     r = st.session_state.get(FIELD_KEYS["nivel_riesgo"], "")
     h = ",".join(st.session_state.get(FIELD_KEYS["hallazgos"], []) or [])
-    return f"{d}|{r}|{h}"
+    o = st.session_state.get(FIELD_KEYS["observaciones_raw"], "")
+    return f"{d}|{r}|{h}|{o}"
+
+
+def _contains_any(text: str, words: List[str]) -> bool:
+    t = strip_accents((text or "").lower())
+    return any(strip_accents(w.lower()) in t for w in words)
+
+
+def generate_conclusion_compact(disciplina: str, nivel_riesgo: str, hallazgos: List[str], observaciones: str) -> str:
+    # NOTA: por decisión tuya, NO repetimos el nivel de riesgo aquí (ya está en tabla).
+    disc = (disciplina or "Otra").strip()
+    obs = observaciones or ""
+    hall = hallazgos or []
+
+    # Causa (1 frase)
+    causas = []
+
+    # Electricidad
+    if disc.lower().startswith("eléctr"):
+        if _contains_any(obs, ["tablero", "tableros", "gabinete", "panel"]):
+            causas.append("condición deficiente en tableros/gabinetes")
+        if _contains_any(obs, ["loto", "bloqueo", "etiquetado"]):
+            causas.append("ausencia o debilidad de control LOTO")
+        if _contains_any(obs, ["polvo conductor", "polvo", "suciedad"]):
+            causas.append("acumulación de polvo")
+        if not causas and hall:
+            causas.append("condiciones observadas en terreno")
+
+        accion = "Corregir según prioridad"
+        if _contains_any(obs, ["polvo conductor", "polvo", "suciedad", "aseo", "limpieza"]) or ("Orden y limpieza" in hall):
+            accion = "Realizar limpieza y control de polvo conductor"
+        if _contains_any(obs, ["loto", "bloqueo", "etiquetado"]) or ("LOTO" in hall):
+            accion = accion + " y asegurar aplicación LOTO"
+        if _contains_any(obs, ["tablero", "tableros", "gabinete", "panel"]) or ("Tableros" in hall):
+            accion = accion + " en tableros/gabinetes"
+
+    # Mecánica
+    elif disc.lower().startswith("mec"):
+        if _contains_any(obs, ["guardas", "proteccion", "protección"]):
+            causas.append("protecciones/guardas deficientes")
+        if _contains_any(obs, ["fuga", "aceite", "lubric"]):
+            causas.append("fugas o lubricación deficiente")
+        if not causas and hall:
+            causas.append("condiciones mecánicas observadas")
+        accion = "Corregir según prioridad"
+
+    # Instrumental / Instrumentación
+    elif disc.lower().startswith("instr"):
+        if _contains_any(obs, ["medicion", "medición", "calibr", "señal", "sensor"]):
+            causas.append("condición de medición/control a verificar")
+        if not causas and hall:
+            causas.append("condiciones de instrumentación observadas")
+        accion = "Verificar y corregir según prioridad"
+
+    # Civil / Otra
+    else:
+        if not causas and hall:
+            causas.append("condiciones observadas")
+        accion = "Corregir según prioridad"
+
+    causa_txt = " y ".join(causas) if causas else "condiciones observadas"
+    frase1 = f"Se identifican {causa_txt}."
+    frase2 = f"{accion}."
+
+    # Compactar por si se va largo (para evitar segunda hoja)
+    out = f"{frase1} {frase2}"
+    out = re.sub(r"\s+", " ", out).strip()
+    if len(out) > 260:
+        out = out[:257].rstrip() + "..."
+    return out
 
 
 def sync_auto_conclusion_if_needed():
@@ -429,10 +485,11 @@ def sync_auto_conclusion_if_needed():
     last_hash = st.session_state.get(FIELD_KEYS["last_auto_hash"], "")
 
     if current_hash != last_hash or not (st.session_state.get(FIELD_KEYS["conclusion"], "").strip()):
-        st.session_state[FIELD_KEYS["conclusion"]] = generate_conclusion_short(
+        st.session_state[FIELD_KEYS["conclusion"]] = generate_conclusion_compact(
             st.session_state.get(FIELD_KEYS["disciplina"], "Otra"),
             st.session_state.get(FIELD_KEYS["nivel_riesgo"], "Medio"),
             st.session_state.get(FIELD_KEYS["hallazgos"], []),
+            st.session_state.get(FIELD_KEYS["observaciones_raw"], ""),
         )
         st.session_state[FIELD_KEYS["last_auto_hash"]] = current_hash
 
@@ -440,329 +497,4 @@ def sync_auto_conclusion_if_needed():
 # -----------------------------
 # Imágenes (COVER)
 # -----------------------------
-def _img_cover(file_bytes: bytes, w_mm: float, h_mm: float) -> io.BytesIO:
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
-    box_px_w = 1500
-    box_px_h = max(1, int(box_px_w * (h_mm / w_mm)))
-
-    scale = max(box_px_w / img.width, box_px_h / img.height)
-    img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
-
-    left = (img.width - box_px_w) // 2
-    top = (img.height - box_px_h) // 2
-    img = img.crop((left, top, left + box_px_w, top + box_px_h))
-
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=90)
-    buf.seek(0)
-    return buf
-
-
-# -----------------------------
-# PDF
-# -----------------------------
-def build_pdf(
-    data_dict: dict,
-    fotos: List[Tuple[str, bytes]],
-    firma_img: Optional[Tuple[str, bytes]],
-) -> bytes:
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, margin=15 * mm)
-    styles = getSampleStyleSheet()
-
-    story = [
-        Paragraph("INFORME TÉCNICO DE INSPECCIÓN", styles["Heading1"]),
-        Spacer(1, 8),
-    ]
-
-    table_data = [
-        ["Fecha", data_dict["fecha"]],
-        ["Título", data_dict["titulo"]],
-        ["Disciplina", data_dict["disciplina"]],
-        ["Riesgo", data_dict["nivel_riesgo"]],
-        ["Equipo/Área", data_dict["equipo"] or "—"],
-        ["Ubicación", data_dict["ubicacion"] or "—"],
-        ["Inspector", data_dict["inspector"]],
-        ["Cargo", data_dict["cargo"]],
-        ["OT/Registro", data_dict["registro_ot"] or "—"],
-    ]
-
-    t = Table(table_data, colWidths=[42 * mm, 138 * mm])
-    t.setStyle(
-        TableStyle(
-            [
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ]
-        )
-    )
-    story.extend([t, Spacer(1, 10)])
-
-    story.append(Paragraph("Observaciones", styles["Heading2"]))
-    story.append(Paragraph(escape(data_dict["observaciones"]).replace("\n", "<br/>"), styles["BodyText"]))
-    story.append(Spacer(1, 8))
-
-    story.append(Paragraph("Conclusión", styles["Heading2"]))
-    story.append(Paragraph(escape(data_dict["conclusion"]).replace("\n", "<br/>"), styles["BodyText"]))
-    story.append(Spacer(1, 8))
-
-    if fotos:
-        story.append(Paragraph("Imágenes", styles["Heading2"]))
-        use = fotos[:3]
-        n = len(use)
-
-        img_w_mm = TOTAL_IMG_W_MM / n
-        img_h_mm = TOTAL_IMG_H_MM
-
-        imgs = []
-        for _, b in use:
-            imgs.append(
-                RLImage(
-                    _img_cover(b, img_w_mm, img_h_mm),
-                    width=img_w_mm * mm,
-                    height=img_h_mm * mm,
-                )
-            )
-
-        img_table = Table([imgs], colWidths=[img_w_mm * mm] * n)
-        img_table.setStyle(
-            TableStyle(
-                [
-                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ]
-            )
-        )
-        story.append(img_table)
-
-    if firma_img:
-        story.append(Spacer(1, 8))
-        sig = RLImage(
-            _img_cover(firma_img[1], SIGN_W_MM, SIGN_H_MM),
-            width=SIGN_W_MM * mm,
-            height=SIGN_H_MM * mm,
-        )
-        story.append(sig)
-
-    doc.build(story)
-    return buffer.getvalue()
-
-
-# -----------------------------
-# Compartir (Web Share API) para móvil
-# -----------------------------
-def render_share_button(pdf_bytes: bytes, filename: str, token: str) -> None:
-    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-    safe_name = (filename or "informe.pdf").replace('"', "").replace("'", "")
-
-    html = f"""
-    <div style="width:100%; margin-top: 10px;">
-      <button id="shareBtn_{token}"
-        style="
-          width:100%;
-          padding: 0.6rem 0.9rem;
-          border-radius: 12px;
-          border: 1px solid #CBD5E1;
-          background: white;
-          font-weight: 800;
-          cursor: pointer;">
-        📤 Compartir PDF
-      </button>
-      <div id="shareMsg_{token}" style="margin-top:8px; font-size: 0.9rem;"></div>
-    </div>
-
-    <script>
-      (function() {{
-        const btn = document.getElementById("shareBtn_{token}");
-        const msg = document.getElementById("shareMsg_{token}");
-        const b64 = "{b64}";
-        const filename = "{safe_name}";
-
-        function b64ToUint8Array(base64) {{
-          const binary_string = atob(base64);
-          const len = binary_string.length;
-          const bytes = new Uint8Array(len);
-          for (let i = 0; i < len; i++) {{
-            bytes[i] = binary_string.charCodeAt(i);
-          }}
-          return bytes;
-        }}
-
-        async function sharePdf() {{
-          try {{
-            if (!navigator.share) {{
-              msg.innerHTML = "⚠️ Tu navegador no permite compartir directo. Usa 'Descargar Informe'.";
-              return;
-            }}
-            const bytes = b64ToUint8Array(b64);
-            const blob = new Blob([bytes], {{ type: "application/pdf" }});
-            const file = new File([blob], filename, {{ type: "application/pdf" }});
-
-            const data = {{
-              title: "Informe PDF",
-              text: "Informe generado en jcamp029.pro",
-              files: [file]
-            }};
-
-            if (navigator.canShare && !navigator.canShare(data)) {{
-              msg.innerHTML = "⚠️ No se puede compartir archivo aquí. Descarga el PDF y compártelo manual.";
-              return;
-            }}
-
-            await navigator.share(data);
-            msg.innerHTML = "✅ Compartido.";
-          }} catch (e) {{
-            msg.innerHTML = "⚠️ Compartir cancelado o no disponible.";
-          }}
-        }}
-
-        btn.addEventListener("click", sharePdf);
-      }})();
-    </script>
-    """
-    components.html(html, height=120)
-
-
-# -----------------------------
-# UI
-# -----------------------------
-apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
-
-st.markdown(
-    f"<h1><i>{APP_TITLE}</i></h1><p class='muted'>{APP_SUBTITLE}</p>",
-    unsafe_allow_html=True,
-)
-
-st.radio("Tema", ["Claro", "Oscuro"], horizontal=True, key=FIELD_KEYS["theme"])
-apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
-
-# Configuración + Limpieza
-st.markdown("<div class='app-card'>", unsafe_allow_html=True)
-c1, c2, c3, c4 = st.columns([1, 1, 1, 1.4])
-with c1:
-    st.checkbox("Firma", key=FIELD_KEYS["include_signature"])
-with c2:
-    st.checkbox("Fotos", key=FIELD_KEYS["include_photos"])
-with c3:
-    st.checkbox("Corrección", key=FIELD_KEYS["show_correccion"])
-with c4:
-    if st.button("Limpiar formulario", use_container_width=True):
-        hard_reset_now()
-st.markdown("</div>", unsafe_allow_html=True)
-
-# Formulario
-st.markdown("<div class='app-card'>", unsafe_allow_html=True)
-
-cL, cR = st.columns(2)
-with cL:
-    st.text_input("Fecha", key=FIELD_KEYS["fecha"])
-with cR:
-    st.text_input("Título", key=FIELD_KEYS["titulo"])
-
-cA, cB = st.columns(2)
-with cA:
-    st.selectbox("Disciplina", ["Eléctrica", "Mecánica", "Instrumental", "Civil", "Otra"], key=FIELD_KEYS["disciplina"])
-    st.text_input("Equipo/Área", key=FIELD_KEYS["equipo"])
-    st.text_input("Inspector", key=FIELD_KEYS["inspector"])
-with cB:
-    st.selectbox("Riesgo", ["Bajo", "Medio", "Alto"], key=FIELD_KEYS["nivel_riesgo"])
-    st.text_input("Ubicación", key=FIELD_KEYS["ubicacion"])
-    st.text_input("Cargo", key=FIELD_KEYS["cargo"])
-
-_ins = st.session_state.get(FIELD_KEYS["inspector"], "")
-if _has_obvious_caps_issue(_ins):
-    sugg = _recommended_title_name(_ins)
-    if sugg and sugg != _ins.strip():
-        st.warning(f"⚠️ Revisa capitalización del nombre. Sugerido: {sugg}")
-    else:
-        st.warning("⚠️ Revisa capitalización del nombre (posible mezcla de mayúsculas/minúsculas).")
-
-st.text_input("N° Registro/OT", key=FIELD_KEYS["registro_ot"])
-
-try:
-    st.multiselect(
-        "Hallazgos",
-        ["Condición insegura", "Orden y limpieza", "LOTO", "Tableros", "Otros"],
-        key=FIELD_KEYS["hallazgos"],
-        placeholder="Seleccione opciones",
-    )
-except TypeError:
-    st.multiselect(
-        "Hallazgos",
-        ["Condición insegura", "Orden y limpieza", "LOTO", "Tableros", "Otros"],
-        key=FIELD_KEYS["hallazgos"],
-    )
-
-st.text_area("Observaciones", height=120, key=FIELD_KEYS["observaciones_raw"])
-
-# Corrección (técnica A)
-if st.session_state[FIELD_KEYS["show_correccion"]]:
-    if st.button("Sugerir correcciones"):
-        fixed, changes = technical_spanish_fixes(st.session_state[FIELD_KEYS["observaciones_raw"]])
-        st.session_state[FIELD_KEYS["obs_fixed_preview"]] = fixed
-        if changes:
-            st.info("Cambios: " + " | ".join(changes))
-        else:
-            st.info("Sin cambios detectados.")
-
-    if st.session_state.get(FIELD_KEYS["obs_fixed_preview"], "").strip():
-        st.text_area("Sugerencia", key=FIELD_KEYS["obs_fixed_preview"], height=90)
-        st.button("Aplicar sugerencias", on_click=apply_obs_fix)
-
-st.checkbox("Auto", key=FIELD_KEYS["auto_conclusion"])
-sync_auto_conclusion_if_needed()
-
-cX, cY = st.columns(2)
-with cX:
-    if st.button("🔁 Auto", use_container_width=True):
-        st.session_state[FIELD_KEYS["conclusion_locked"]] = False
-        st.session_state[FIELD_KEYS["last_auto_hash"]] = ""
-        sync_auto_conclusion_if_needed()
-        st.rerun()
-with cY:
-    if st.button("✍️ Manual", use_container_width=True):
-        st.session_state[FIELD_KEYS["conclusion_locked"]] = True
-        st.rerun()
-
-st.text_area("Conclusión", height=120, key=FIELD_KEYS["conclusion"])
-st.markdown("</div>", unsafe_allow_html=True)
-
-# Multimedia
-st.markdown("<div class='app-card'>", unsafe_allow_html=True)
-st.subheader("Multimedia")
-nonce = st.session_state[UP_NONCE]
-
-fotos_files = (
-    st.file_uploader("Fotos (Máx 3)", type=["jpg", "png", "jpeg"], accept_multiple_files=True, key=f"f_{nonce}")
-    if st.session_state[FIELD_KEYS["include_photos"]]
-    else None
-)
-firma_file = (
-    st.file_uploader("Firma", type=["jpg", "png", "jpeg"], key=f"s_{nonce}")
-    if st.session_state[FIELD_KEYS["include_signature"]]
-    else None
-)
-st.markdown("</div>", unsafe_allow_html=True)
-
-# Generación
-if st.button("Generar PDF Profesional ✅", use_container_width=True):
-    fotos = [(f.name, f.read()) for f in (fotos_files or [])[:3]]
-    firma = (firma_file.name, firma_file.read()) if firma_file else None
-
-    datos = {
-    "titulo": st.session_state[FIELD_KEYS["titulo"]],
-    "fecha": st.session_state[FIELD_KEYS["fecha"]],
-    "disciplina": st.session_state[FIELD_KEYS["disciplina"]],
-    "equipo": st.session_state[FIELD_KEYS["equipo"]],
-    "ubicacion": st.session_state[FIELD_KEYS["ubicacion"]],
-    "inspector": st.session_state[FIELD_KEYS["inspector"]],
-    "cargo": st.session_state[FIELD_KEYS["cargo"]],
-    "registro_ot": st.session_state[FIELD_KEYS["registro_ot"]],
-    "nivel_riesgo": st.session_state[FIELD_KEYS["nivel_riesgo"]],
-    "observaciones": st.session_state[FIELD_KEYS["observaciones_raw"]],
-    "conclusion": st.session_state[FIELD_KEYS["conclusion"]],
-}
-pdf_output = build_pdf(datos, fotos, firma)
+def _img_cover(file_bytes: bytes, w_mm: float, h_mm: float
