@@ -375,7 +375,7 @@ TECH_WORDS = {
     "mecanico": "mecánico",
     "mecanica": "mecánica",
     "instrumentacion": "instrumentación",
-    "medicion": "medición",          # ✅ FIX: antes no estaba (tu caso real)
+    "medicion": "medición",
     "epp": "EPP",
 }
 
@@ -418,13 +418,119 @@ def apply_obs_fix():
 
 
 # -----------------------------
-# Auto-conclusión (corta)
+# Auto-conclusión (tipo informe, corta y técnica)
 # -----------------------------
 def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: List[str]) -> str:
-    riesgo = f"Riesgo {nivel_riesgo.lower()}"
-    prioridad = "inmediata" if nivel_riesgo == "Alto" else "programada" if nivel_riesgo == "Medio" else "rutinaria"
-    hall = ", ".join(hallazgos) if hallazgos else "General"
-    return f"{disciplina}: {riesgo}. Prioridad {prioridad}. Hallazgos: {hall}. Acción: corregir según prioridad."
+    """
+    Estilo objetivo (como informe real):
+    - "Se determina riesgo X debido a ..."
+    - "Se requiere ... para prevenir ..."
+    - Máximo ~2 líneas, sin relleno.
+    """
+    d = (disciplina or "Otra").strip()
+    r = (nivel_riesgo or "Medio").strip()
+
+    riesgo_phrase = {
+        "Bajo": "riesgo bajo",
+        "Medio": "riesgo medio",
+        "Alto": "riesgo alto",
+    }.get(r, "riesgo medio")
+
+    # Normaliza hallazgos (por seguridad)
+    hs = [h.strip() for h in (hallazgos or []) if (h or "").strip()]
+
+    # Causas por disciplina (base)
+    base_cause_by_disc = {
+        "Eléctrica": "deficiencias en instalaciones y/o tableros",
+        "Mecánica": "condiciones mecánicas deficientes y/o elementos expuestos",
+        "Instrumental": "condiciones deficientes en instrumentación y/o señales de proceso",
+        "Civil": "condiciones deficientes en infraestructura y/o vías de tránsito",
+        "Otra": "condiciones deficientes detectadas en terreno",
+    }
+    base_action_by_disc = {
+        "Eléctrica": "normalización de tableros, limpieza y control de polvo conductor",
+        "Mecánica": "normalización de resguardos, ajustes y corrección de holguras/desgaste",
+        "Instrumental": "verificación/calibración, normalización de señales y aseguramiento de conexiones",
+        "Civil": "reparación/aseguramiento de infraestructura y mejora de condiciones de tránsito",
+        "Otra": "corrección de condiciones detectadas y normalización del área",
+    }
+
+    # Map hallazgos -> causa/acción (complementa lo base)
+    hallazgo_rules = {
+        "LOTO": {
+            "cause": "ausencia o incumplimiento de control LOTO",
+            "action": "implementar y verificar control LOTO previo a intervención",
+        },
+        "Tableros": {
+            "cause": "deficiencias en tableros y protecciones",
+            "action": "normalizar tableros, asegurar protecciones y rotulación",
+        },
+        "Orden y limpieza": {
+            "cause": "deficiencias de orden y limpieza",
+            "action": "realizar limpieza y control de material/polvo en el área",
+        },
+        "Condición insegura": {
+            "cause": "condición insegura presente en el área/equipo",
+            "action": "corregir condición insegura y asegurar control de riesgos",
+        },
+        "Otros": {
+            "cause": "hallazgos adicionales relevantes",
+            "action": "corregir hallazgos detectados según criticidad",
+        },
+    }
+
+    # Arma lista de causas/acciones específicas (según hallazgos seleccionados)
+    causes = []
+    actions = []
+
+    for h in hs:
+        rule = hallazgo_rules.get(h)
+        if rule:
+            causes.append(rule["cause"])
+            actions.append(rule["action"])
+
+    # Si no hay hallazgos, cae a base disciplina
+    base_cause = base_cause_by_disc.get(d, base_cause_by_disc["Otra"])
+    base_action = base_action_by_disc.get(d, base_action_by_disc["Otra"])
+
+    # Causa final: base + específicas sin repetir
+    cause_parts = [base_cause]
+    for c in causes:
+        if c not in cause_parts:
+            cause_parts.append(c)
+
+    # Acción final: mezcla base + específicas (prioriza específicas si existen)
+    action_parts = []
+    if actions:
+        # si hay hallazgos, empieza por lo más "universal" y agrega
+        action_parts.append(base_action)
+        for a in actions:
+            if a not in action_parts:
+                action_parts.append(a)
+    else:
+        action_parts = [base_action]
+
+    cause_text = ", ".join(cause_parts)
+    action_text = "; ".join(action_parts)
+
+    # Prevención (por severidad)
+    prevent_text = {
+        "Alto": "para prevenir accidentes y daño a equipos",
+        "Medio": "para prevenir contacto accidental y fallas operacionales",
+        "Bajo": "para mantener condiciones seguras de operación",
+    }.get(r, "para prevenir contacto accidental y fallas operacionales")
+
+    # Toque de disciplina en frase (como tu ejemplo)
+    prefix = {
+        "Eléctrica": "Se determina",
+        "Mecánica": "Se determina",
+        "Instrumental": "Se determina",
+        "Civil": "Se determina",
+        "Otra": "Se determina",
+    }.get(d, "Se determina")
+
+    # Resultado final (2 frases)
+    return f"{prefix} {riesgo_phrase} debido a {cause_text}. Se requiere {action_text} {prevent_text}."
 
 
 def compute_auto_hash() -> str:
@@ -685,7 +791,7 @@ if _has_obvious_caps_issue(_ins):
 
 st.text_input("N° Registro/OT", key=FIELD_KEYS["registro_ot"])
 
-# Hallazgos (placeholder en español cuando la versión de Streamlit lo soporte)
+# Hallazgos
 try:
     st.multiselect(
         "Hallazgos",
