@@ -472,4 +472,4 @@ def generate_conclusion_auto_v2(disciplina: str, hallazgos: List[str], observaci
         # Acciones recomendadas (compactas)
         if has_loto or ("LOTO" in hall) or ("Loto" in hall):
             acciones.append("implementar y verificar LOTO")
-        if has_tablero
+        if has_tablero:
