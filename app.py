@@ -519,4 +519,4 @@ def build_pdf(
         img_h_mm = TOTAL_IMG_H_MM
 
         imgs = [
-            RLImage(_img_cover(b, img_w_mm, img_h_mm), width=img_w_mm * mm, height=img_h_mm * mm)
+            # RLImage(_img_cover(b, img_w_mm, img_h_mm), width=img_w_mm * mm, height=img_h_mm * mm]
