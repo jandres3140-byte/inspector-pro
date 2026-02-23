@@ -52,6 +52,8 @@ FIELD_KEYS = {
     "show_correccion": "show_correccion",
     "auto_conclusion": "auto_conclusion",
 
+    "auto_started": "auto_started",  # ✅ NO autogenerar hasta que el usuario lo pida
+
     "fecha": "fecha",
     "titulo": "titulo",
     "disciplina": "disciplina",
@@ -85,6 +87,8 @@ def get_defaults() -> dict:
         FIELD_KEYS["include_photos"]: True,
         FIELD_KEYS["show_correccion"]: True,
         FIELD_KEYS["auto_conclusion"]: True,
+
+        FIELD_KEYS["auto_started"]: False,
 
         FIELD_KEYS["fecha"]: datetime.now(TZ_CL).strftime("%d-%m-%Y"),
         FIELD_KEYS["titulo"]: "Informe Técnico de Inspección",
@@ -283,11 +287,6 @@ def apply_theme_css(theme: str) -> None:
 # Recomendación NO bloqueante para Nombres (Inspector)
 # -----------------------------
 def _recommended_title_name(name: str) -> str:
-    """
-    Recomendación suave (no autocorrige el campo):
-    - Normaliza espacios
-    - Title-case por palabras y separadores comunes
-    """
     s = (name or "").strip()
     s = re.sub(r"\s+", " ", s)
 
@@ -302,12 +301,6 @@ def _recommended_title_name(name: str) -> str:
 
 
 def _has_obvious_caps_issue(name: str) -> bool:
-    """
-    Detecta patrones "obvios" de capitalización:
-    - todo en minúsculas
-    - todo en MAYÚSCULAS
-    - mezcla rara tipo "JOrge" (segunda letra mayúscula o mezcla extraña)
-    """
     s = (name or "").strip()
     if not s:
         return False
@@ -418,119 +411,82 @@ def apply_obs_fix():
 
 
 # -----------------------------
-# Auto-conclusión (tipo informe, corta y técnica)
+# Auto-conclusión (corta, no redundante, tipo informe)
 # -----------------------------
 def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: List[str]) -> str:
-    """
-    Estilo objetivo (como informe real):
-    - "Se determina riesgo X debido a ..."
-    - "Se requiere ... para prevenir ..."
-    - Máximo ~2 líneas, sin relleno.
-    """
     d = (disciplina or "Otra").strip()
     r = (nivel_riesgo or "Medio").strip()
-
-    riesgo_phrase = {
-        "Bajo": "riesgo bajo",
-        "Medio": "riesgo medio",
-        "Alto": "riesgo alto",
-    }.get(r, "riesgo medio")
-
-    # Normaliza hallazgos (por seguridad)
     hs = [h.strip() for h in (hallazgos or []) if (h or "").strip()]
 
-    # Causas por disciplina (base)
-    base_cause_by_disc = {
-        "Eléctrica": "deficiencias en instalaciones y/o tableros",
-        "Mecánica": "condiciones mecánicas deficientes y/o elementos expuestos",
-        "Instrumental": "condiciones deficientes en instrumentación y/o señales de proceso",
-        "Civil": "condiciones deficientes en infraestructura y/o vías de tránsito",
-        "Otra": "condiciones deficientes detectadas en terreno",
-    }
-    base_action_by_disc = {
-        "Eléctrica": "normalización de tableros, limpieza y control de polvo conductor",
-        "Mecánica": "normalización de resguardos, ajustes y corrección de holguras/desgaste",
-        "Instrumental": "verificación/calibración, normalización de señales y aseguramiento de conexiones",
-        "Civil": "reparación/aseguramiento de infraestructura y mejora de condiciones de tránsito",
-        "Otra": "corrección de condiciones detectadas y normalización del área",
-    }
+    # "riesgo eléctrico medio" (como tu ejemplo)
+    adj = {
+        "Eléctrica": "eléctrico",
+        "Mecánica": "mecánico",
+        "Instrumental": "instrumental",
+        "Civil": "civil",
+        "Otra": "",
+    }.get(d, "")
 
-    # Map hallazgos -> causa/acción (complementa lo base)
-    hallazgo_rules = {
-        "LOTO": {
-            "cause": "ausencia o incumplimiento de control LOTO",
-            "action": "implementar y verificar control LOTO previo a intervención",
-        },
-        "Tableros": {
-            "cause": "deficiencias en tableros y protecciones",
-            "action": "normalizar tableros, asegurar protecciones y rotulación",
-        },
-        "Orden y limpieza": {
-            "cause": "deficiencias de orden y limpieza",
-            "action": "realizar limpieza y control de material/polvo en el área",
-        },
-        "Condición insegura": {
-            "cause": "condición insegura presente en el área/equipo",
-            "action": "corregir condición insegura y asegurar control de riesgos",
-        },
-        "Otros": {
-            "cause": "hallazgos adicionales relevantes",
-            "action": "corregir hallazgos detectados según criticidad",
-        },
-    }
+    nivel_txt = {"Bajo": "bajo", "Medio": "medio", "Alto": "alto"}.get(r, "medio")
+    riesgo_txt = f"riesgo {adj} {nivel_txt}".strip()
 
-    # Arma lista de causas/acciones específicas (según hallazgos seleccionados)
-    causes = []
-    actions = []
-
-    for h in hs:
-        rule = hallazgo_rules.get(h)
-        if rule:
-            causes.append(rule["cause"])
-            actions.append(rule["action"])
-
-    # Si no hay hallazgos, cae a base disciplina
-    base_cause = base_cause_by_disc.get(d, base_cause_by_disc["Otra"])
-    base_action = base_action_by_disc.get(d, base_action_by_disc["Otra"])
-
-    # Causa final: base + específicas sin repetir
-    cause_parts = [base_cause]
-    for c in causes:
-        if c not in cause_parts:
-            cause_parts.append(c)
-
-    # Acción final: mezcla base + específicas (prioriza específicas si existen)
-    action_parts = []
-    if actions:
-        # si hay hallazgos, empieza por lo más "universal" y agrega
-        action_parts.append(base_action)
-        for a in actions:
-            if a not in action_parts:
-                action_parts.append(a)
-    else:
-        action_parts = [base_action]
-
-    cause_text = ", ".join(cause_parts)
-    action_text = "; ".join(action_parts)
-
-    # Prevención (por severidad)
-    prevent_text = {
+    prevent_txt = {
         "Alto": "para prevenir accidentes y daño a equipos",
         "Medio": "para prevenir contacto accidental y fallas operacionales",
         "Bajo": "para mantener condiciones seguras de operación",
     }.get(r, "para prevenir contacto accidental y fallas operacionales")
 
-    # Toque de disciplina en frase (como tu ejemplo)
-    prefix = {
-        "Eléctrica": "Se determina",
-        "Mecánica": "Se determina",
-        "Instrumental": "Se determina",
-        "Civil": "Se determina",
-        "Otra": "Se determina",
-    }.get(d, "Se determina")
+    # Prioridad de hallazgos (dominantes primero)
+    priority = ["LOTO", "Tableros", "Condición insegura", "Orden y limpieza", "Otros"]
 
-    # Resultado final (2 frases)
-    return f"{prefix} {riesgo_phrase} debido a {cause_text}. Se requiere {action_text} {prevent_text}."
+    # Causa/Acción por hallazgo (solo 1 línea cada una)
+    rule = {
+        "LOTO": ("ausencia de control LOTO", "implementar y verificar control LOTO previo a intervención"),
+        "Tableros": ("deficiencias en tableros/protecciones", "normalizar tableros y asegurar protecciones/rotulación"),
+        "Condición insegura": ("condición insegura en el área/equipo", "corregir condición insegura y asegurar control de riesgos"),
+        "Orden y limpieza": ("deficiencias de orden y limpieza", "realizar limpieza y control de polvo/material conductor"),
+        "Otros": ("hallazgos relevantes en terreno", "corregir hallazgos detectados según criticidad"),
+    }
+
+    # Si no hay hallazgos seleccionados, cae a base por disciplina (una sola causa/acción)
+    base_by_disc = {
+        "Eléctrica": ("deficiencias en instalaciones eléctricas", "normalizar instalaciones y ejecutar limpieza/control de polvo conductor"),
+        "Mecánica": ("deficiencias en elementos mecánicos", "normalizar resguardos y corregir condiciones mecánicas"),
+        "Instrumental": ("deficiencias en instrumentación/señales", "verificar, calibrar y normalizar instrumentación/señales"),
+        "Civil": ("deficiencias en infraestructura", "reparar/asegurar infraestructura y mejorar condiciones del área"),
+        "Otra": ("condiciones deficientes detectadas", "corregir condiciones detectadas y normalizar el área"),
+    }
+
+    if not hs:
+        cause, action = base_by_disc.get(d, base_by_disc["Otra"])
+        return f"Se determina {riesgo_txt} debido a {cause}. Se requiere {action} {prevent_txt}."
+
+    # Arma causas/acciones dominantes, sin repetir y limitado (2 y 2)
+    selected_causes = []
+    selected_actions = []
+
+    hs_set = set(hs)
+    for p in priority:
+        if p in hs_set:
+            c, a = rule[p]
+            if c not in selected_causes:
+                selected_causes.append(c)
+            if a not in selected_actions:
+                selected_actions.append(a)
+        if len(selected_causes) >= 2 and len(selected_actions) >= 2:
+            break
+
+    # Seguridad: nunca vacío
+    if not selected_causes:
+        selected_causes = [base_by_disc.get(d, base_by_disc["Otra"])[0]]
+    if not selected_actions:
+        selected_actions = [base_by_disc.get(d, base_by_disc["Otra"])[1]]
+
+    # Formato final (2 frases, sin redundancia)
+    cause_txt = " y ".join(selected_causes[:2])
+    action_txt = " y ".join(selected_actions[:2])
+
+    return f"Se determina {riesgo_txt} debido a {cause_txt}. Se requiere {action_txt} {prevent_txt}."
 
 
 def compute_auto_hash() -> str:
@@ -540,22 +496,21 @@ def compute_auto_hash() -> str:
     return f"{d}|{r}|{h}"
 
 
-def sync_auto_conclusion_if_needed():
+def sync_auto_conclusion_force():
+    """
+    Genera/actualiza conclusión automáticamente (solo cuando el usuario lo pide o al generar PDF).
+    """
     if not st.session_state.get(FIELD_KEYS["auto_conclusion"], True):
         return
     if st.session_state.get(FIELD_KEYS["conclusion_locked"], False):
         return
 
-    current_hash = compute_auto_hash()
-    last_hash = st.session_state.get(FIELD_KEYS["last_auto_hash"], "")
-
-    if current_hash != last_hash or not (st.session_state.get(FIELD_KEYS["conclusion"], "").strip()):
-        st.session_state[FIELD_KEYS["conclusion"]] = generate_conclusion_short(
-            st.session_state.get(FIELD_KEYS["disciplina"], "Otra"),
-            st.session_state.get(FIELD_KEYS["nivel_riesgo"], "Medio"),
-            st.session_state.get(FIELD_KEYS["hallazgos"], []),
-        )
-        st.session_state[FIELD_KEYS["last_auto_hash"]] = current_hash
+    st.session_state[FIELD_KEYS["conclusion"]] = generate_conclusion_short(
+        st.session_state.get(FIELD_KEYS["disciplina"], "Otra"),
+        st.session_state.get(FIELD_KEYS["nivel_riesgo"], "Medio"),
+        st.session_state.get(FIELD_KEYS["hallazgos"], []),
+    )
+    st.session_state[FIELD_KEYS["last_auto_hash"]] = compute_auto_hash()
 
 
 # -----------------------------
@@ -566,6 +521,11 @@ def _img_cover(file_bytes: bytes, w_mm: float, h_mm: float) -> io.BytesIO:
     box_px_w = 1500
     box_px_h = max(1, int(box_px_w * (h_mm / w_mm)))
 
+    scale = max(box_px_w / img.width, box_px_h / img.height)
+    img = img.resize((int(img.width * scale), int(box_px_h * 1.0)), Image.Resampling.LANCZOS)
+
+    # re-check aspect safely by doing a proper resize-crop
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
     scale = max(box_px_w / img.width, box_px_h / img.height)
     img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
 
@@ -822,16 +782,15 @@ if st.session_state[FIELD_KEYS["show_correccion"]]:
         st.text_area("Sugerencia", key=FIELD_KEYS["obs_fixed_preview"], height=90)
         st.button("Aplicar sugerencias", on_click=apply_obs_fix)
 
-# Auto / Manual
+# Auto / Manual (✅ ya NO se autogenera sola)
 st.checkbox("Auto", key=FIELD_KEYS["auto_conclusion"])
-sync_auto_conclusion_if_needed()
 
 cX, cY = st.columns(2)
 with cX:
     if st.button("🔁 Auto", use_container_width=True):
+        st.session_state[FIELD_KEYS["auto_started"]] = True
         st.session_state[FIELD_KEYS["conclusion_locked"]] = False
-        st.session_state[FIELD_KEYS["last_auto_hash"]] = ""
-        sync_auto_conclusion_if_needed()
+        sync_auto_conclusion_force()
         st.rerun()
 with cY:
     if st.button("✍️ Manual", use_container_width=True):
@@ -862,6 +821,11 @@ st.markdown("</div>", unsafe_allow_html=True)
 if st.button("Generar PDF Profesional ✅", use_container_width=True):
     fotos = [(f.name, f.read()) for f in (fotos_files or [])[:3]]
     firma = (firma_file.name, firma_file.read()) if firma_file else None
+
+    # ✅ Si está en Auto, no está en Manual y está vacío, se genera al momento de exportar
+    if st.session_state.get(FIELD_KEYS["auto_conclusion"], True) and not st.session_state.get(FIELD_KEYS["conclusion_locked"], False):
+        if not (st.session_state.get(FIELD_KEYS["conclusion"], "").strip()):
+            sync_auto_conclusion_force()
 
     datos = {
         "titulo": st.session_state[FIELD_KEYS["titulo"]],
