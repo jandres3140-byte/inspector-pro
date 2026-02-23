@@ -318,10 +318,6 @@ def _has_obvious_caps_issue(name: str) -> bool:
     if all(ch.islower() for ch in letters):
         return True
 
-    # ✅ ya NO marcamos "todo en MAYÚSCULAS" como problema
-    # if all(ch.isupper() for ch in letters):
-    #     return True
-
     words = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", s)
     for w in words:
         if len(w) >= 2 and w[0].isupper():
@@ -642,6 +638,9 @@ def compute_auto_hash() -> str:
 
 
 def sync_auto_conclusion_force():
+    # ✅ Solo si el usuario ya pidió auto (botón 🔁 Auto) en esta sesión
+    if not st.session_state.get(FIELD_KEYS["auto_started"], False):
+        return
     if not st.session_state.get(FIELD_KEYS["auto_conclusion"], True):
         return
     if st.session_state.get(FIELD_KEYS["conclusion_locked"], False):
@@ -764,9 +763,22 @@ def build_pdf(
 # -----------------------------
 # Compartir (Web Share API) para móvil
 # -----------------------------
-def render_share_button(pdf_bytes: bytes, filename: str, token: str) -> None:
+def render_share_button(pdf_bytes: bytes, filename: str, token: str, theme: str) -> None:
     b64 = base64.b64encode(pdf_bytes).decode("utf-8")
     safe_name = (filename or "informe.pdf").replace('"', "").replace("'", "")
+
+    if theme == "Oscuro":
+        bg = "#0B1220"
+        border = "#2A3A58"
+        fg = "#FFFFFF"
+        hover = "#101A2E"
+        msg_fg = "#D6DEEA"
+    else:
+        bg = "#FFFFFF"
+        border = "#CBD5E1"
+        fg = "#0F172A"
+        hover = "#F1F5F9"
+        msg_fg = "#334155"
 
     html = f"""
     <div style="width:100%; margin-top: 10px;">
@@ -775,13 +787,14 @@ def render_share_button(pdf_bytes: bytes, filename: str, token: str) -> None:
           width:100%;
           padding: 0.6rem 0.9rem;
           border-radius: 12px;
-          border: 1px solid #CBD5E1;
-          background: white;
+          border: 1px solid {border};
+          background: {bg};
+          color: {fg};
           font-weight: 800;
           cursor: pointer;">
         📤 Compartir PDF
       </button>
-      <div id="shareMsg_{token}" style="margin-top:8px; font-size: 0.9rem;"></div>
+      <div id="shareMsg_{token}" style="margin-top:8px; font-size: 0.9rem; color:{msg_fg};"></div>
     </div>
 
     <script>
@@ -790,6 +803,13 @@ def render_share_button(pdf_bytes: bytes, filename: str, token: str) -> None:
         const msg = document.getElementById("shareMsg_{token}");
         const b64 = "{b64}";
         const filename = "{safe_name}";
+
+        btn.addEventListener("mouseenter", () => {{
+          btn.style.background = "{hover}";
+        }});
+        btn.addEventListener("mouseleave", () => {{
+          btn.style.background = "{bg}";
+        }});
 
         function b64ToUint8Array(base64) {{
           const binary_string = atob(base64);
@@ -958,7 +978,12 @@ if st.button("Generar PDF Profesional ✅", use_container_width=True):
     fotos = [(f.name, f.read()) for f in (fotos_files or [])[:3]]
     firma = (firma_file.name, firma_file.read()) if firma_file else None
 
-    if st.session_state.get(FIELD_KEYS["auto_conclusion"], True) and not st.session_state.get(FIELD_KEYS["conclusion_locked"], False):
+    # ✅ NO autogenerar hasta que el usuario presione “🔁 Auto” al menos una vez
+    if (
+        st.session_state.get(FIELD_KEYS["auto_conclusion"], True)
+        and st.session_state.get(FIELD_KEYS["auto_started"], False)
+        and not st.session_state.get(FIELD_KEYS["conclusion_locked"], False)
+    ):
         if not (st.session_state.get(FIELD_KEYS["conclusion"], "").strip()):
             sync_auto_conclusion_force()
 
@@ -999,4 +1024,4 @@ if last_pdf:
         use_container_width=True,
     )
 
-    render_share_button(last_pdf, last_name or "informe.pdf", last_token or "share")
+    render_share_button(last_pdf, last_name or "informe.pdf", last_token or "share", st.session_state[FIELD_KEYS["theme"]])
