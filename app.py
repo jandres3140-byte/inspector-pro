@@ -291,15 +291,12 @@ def _recommended_title_name(name: str) -> str:
     s = (name or "").strip()
     s = re.sub(r"\s+", " ", s)
 
-    # separadores que queremos preservar
     parts = re.split(r"([ \-’'`])", s)
     out = []
     for p in parts:
         if p in {" ", "-", "’", "'", "`"} or p == "":
             out.append(p)
             continue
-        # Para tokens con letras, title() es una recomendación razonable
-        # (no es corrección legal del nombre).
         out.append(p[:1].upper() + p[1:].lower() if p.isalpha() else p)
     return "".join(out).strip()
 
@@ -309,7 +306,7 @@ def _has_obvious_caps_issue(name: str) -> bool:
     Detecta patrones "obvios" de capitalización:
     - todo en minúsculas
     - todo en MAYÚSCULAS
-    - mayúscula rara tipo "JOrge" (segunda letra mayúscula o mezcla extraña)
+    - mezcla rara tipo "JOrge" (segunda letra mayúscula o mezcla extraña)
     """
     s = (name or "").strip()
     if not s:
@@ -324,11 +321,9 @@ def _has_obvious_caps_issue(name: str) -> bool:
     if all(ch.isupper() for ch in letters):
         return True
 
-    # mezcla rara por palabra
     words = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", s)
     for w in words:
         if len(w) >= 2 and w[0].isupper():
-            # Si hay una mayúscula inesperada después del primer char (y no es todo mayúsculas)
             if any(ch.isupper() for ch in w[1:]) and not w.isupper():
                 return True
     return False
@@ -380,6 +375,7 @@ TECH_WORDS = {
     "mecanico": "mecánico",
     "mecanica": "mecánica",
     "instrumentacion": "instrumentación",
+    "medicion": "medición",          # ✅ FIX: antes no estaba (tu caso real)
     "epp": "EPP",
 }
 
@@ -565,11 +561,6 @@ def build_pdf(
 # Compartir (Web Share API) para móvil
 # -----------------------------
 def render_share_button(pdf_bytes: bytes, filename: str, token: str) -> None:
-    """
-    Botón 'Compartir PDF' usando Web Share API.
-    - En Android (Chrome) abre WhatsApp/Drive/Correo/etc.
-    - En PC si no existe navigator.share, muestra aviso.
-    """
     b64 = base64.b64encode(pdf_bytes).decode("utf-8")
     safe_name = (filename or "informe.pdf").replace('"', "").replace("'", "")
 
@@ -703,7 +694,6 @@ try:
         placeholder="Seleccione opciones",
     )
 except TypeError:
-    # Fallback para versiones antiguas sin placeholder
     st.multiselect(
         "Hallazgos",
         ["Condición insegura", "Orden y limpieza", "LOTO", "Tableros", "Otros"],
@@ -804,5 +794,4 @@ if last_pdf:
         use_container_width=True,
     )
 
-    # Compartir (en móviles compatibles)
     render_share_button(last_pdf, last_name or "informe.pdf", last_token or "share")
