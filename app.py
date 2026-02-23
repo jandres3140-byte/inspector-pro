@@ -804,4 +804,8 @@ if st.session_state.get(FIELD_KEYS["show_correccion"], True):
             apply_obs_fix()
 
     if (st.session_state.get(FIELD_KEYS["obs_fixed_preview"], "") or "").strip():
-        st.text_area("Vista previa corregida", key=FIELD_KEYS["obs_fixed_preview"],)
+    st.text_area(
+        "Vista previa corregida",
+        key=FIELD_KEYS["obs_fixed_preview"],
+        height=170
+    )
