@@ -753,6 +753,16 @@ if st.button("Generar PDF Profesional ✅", use_container_width=True):
     firma = (firma_file.name, firma_file.read()) if firma_file else None
 
     datos = {
-        "titulo": st.session_state[FIELD_KEYS["titulo"]],
-        "fecha": st.session_state[FIELD_KEYS["fecha"]],
-        "disciplina": st.session_state
+    "titulo": st.session_state[FIELD_KEYS["titulo"]],
+    "fecha": st.session_state[FIELD_KEYS["fecha"]],
+    "disciplina": st.session_state[FIELD_KEYS["disciplina"]],
+    "equipo": st.session_state[FIELD_KEYS["equipo"]],
+    "ubicacion": st.session_state[FIELD_KEYS["ubicacion"]],
+    "inspector": st.session_state[FIELD_KEYS["inspector"]],
+    "cargo": st.session_state[FIELD_KEYS["cargo"]],
+    "registro_ot": st.session_state[FIELD_KEYS["registro_ot"]],
+    "nivel_riesgo": st.session_state[FIELD_KEYS["nivel_riesgo"]],
+    "observaciones": st.session_state[FIELD_KEYS["observaciones_raw"]],
+    "conclusion": st.session_state[FIELD_KEYS["conclusion"]],
+}
+pdf_output = build_pdf(datos, fotos, firma)
