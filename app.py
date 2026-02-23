@@ -45,7 +45,7 @@ SIGN_H_MM = 30
 # -----------------------------
 FIELD_KEYS = {
     "theme": "theme",
-    "theme_initialized": "theme_initialized",  # fuerza claro SOLO 1 vez por sesión
+    "theme_initialized": "theme_initialized",
 
     "include_signature": "include_signature",
     "include_photos": "include_photos",
@@ -69,7 +69,7 @@ FIELD_KEYS = {
     "conclusion_locked": "conclusion_locked",
     "last_auto_hash": "last_auto_hash",
 
-    # PDF generado (para descargar/compartir sin perderlo en reruns)
+    # PDF
     "last_pdf_bytes": "last_pdf_bytes",
     "last_pdf_name": "last_pdf_name",
     "last_pdf_token": "last_pdf_token",
@@ -115,8 +115,7 @@ def init_state():
 
     defaults = get_defaults()
 
-    # ✅ abrir siempre en CLARO al inicio de la sesión,
-    # pero permitir cambiar a Oscuro después (no se pisa en reruns).
+    # ✅ abrir siempre en CLARO al inicio de la sesión
     if not st.session_state.get(FIELD_KEYS["theme_initialized"], False):
         st.session_state[FIELD_KEYS["theme"]] = "Claro"
         st.session_state[FIELD_KEYS["theme_initialized"]] = True
@@ -127,9 +126,7 @@ def init_state():
 
 
 def hard_reset_now():
-    """
-    Reset definitivo del formulario preservando el tema actual.
-    """
+    """Reset definitivo preservando el tema actual."""
     current_theme = st.session_state.get(FIELD_KEYS["theme"], "Claro")
 
     for key in list(st.session_state.keys()):
@@ -142,7 +139,7 @@ def hard_reset_now():
         st.session_state[k] = v
 
     st.session_state[FIELD_KEYS["theme"]] = current_theme
-    st.session_state[FIELD_KEYS["theme_initialized"]] = True  # no volver a forzar
+    st.session_state[FIELD_KEYS["theme_initialized"]] = True
     st.rerun()
 
 
@@ -255,7 +252,7 @@ def apply_theme_css(theme: str) -> None:
             color: {btn_text} !important;
         }}
 
-        /* File Uploader (Browse files visible en claro/oscuro) */
+        /* File Uploader */
         div[data-testid="stFileUploader"] {{ color: {fg} !important; }}
         div[data-testid="stFileUploader"] * {{ color: {fg} !important; }}
         div[data-testid="stFileUploader"] section {{
@@ -280,14 +277,9 @@ def apply_theme_css(theme: str) -> None:
 
 
 # -----------------------------
-# Recomendación NO bloqueante para Nombres (Inspector)
+# Recomendación NO bloqueante para nombres (Inspector)
 # -----------------------------
 def _recommended_title_name(name: str) -> str:
-    """
-    Recomendación suave (no autocorrige el campo):
-    - Normaliza espacios
-    - Title-case por palabras y separadores comunes
-    """
     s = (name or "").strip()
     s = re.sub(r"\s+", " ", s)
     parts = re.split(r"([ \-’'`])", s)
@@ -301,12 +293,6 @@ def _recommended_title_name(name: str) -> str:
 
 
 def _has_obvious_caps_issue(name: str) -> bool:
-    """
-    Detecta patrones "obvios" de capitalización:
-    - todo en minúsculas
-    - todo en MAYÚSCULAS
-    - mezcla rara tipo "JOrge" (segunda letra mayúscula o mezcla extraña)
-    """
     s = (name or "").strip()
     if not s:
         return False
@@ -329,7 +315,7 @@ def _has_obvious_caps_issue(name: str) -> bool:
 
 
 # -----------------------------
-# Corrección técnica (A) - solo Observaciones
+# Corrección técnica (solo Observaciones)
 # -----------------------------
 def normalize_spaces(text: str) -> str:
     text = text or ""
@@ -374,7 +360,7 @@ TECH_WORDS = {
     "mecanico": "mecánico",
     "mecanica": "mecánica",
     "instrumentacion": "instrumentación",
-    "medicion": "medición",
+    "medicion": "medición",  # ✅ tu caso
     "epp": "EPP",
 }
 
@@ -417,19 +403,20 @@ def apply_obs_fix():
 
 
 # -----------------------------
-# Auto-conclusión (compacta)
-# (No repite el nivel de riesgo porque ya está en tabla)
+# Auto-conclusión (simple, estable)
 # -----------------------------
-def generate_conclusion_compact(disciplina: str, hallazgos: List[str]) -> str:
+def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: List[str]) -> str:
+    prioridad = "inmediata" if nivel_riesgo == "Alto" else "programada" if nivel_riesgo == "Medio" else "rutinaria"
     hall = ", ".join(hallazgos) if hallazgos else "General"
-    # Sin “Acción:” para que no quede colgando
-    return f"{disciplina}: Hallazgos: {hall}. Corregir según prioridad."
+    # ✅ sin “Acción:” para que no quede colgando
+    return f"{disciplina}: Prioridad {prioridad}. Hallazgos: {hall}. Corregir según prioridad."
 
 
 def compute_auto_hash() -> str:
     d = st.session_state.get(FIELD_KEYS["disciplina"], "")
+    r = st.session_state.get(FIELD_KEYS["nivel_riesgo"], "")
     h = ",".join(st.session_state.get(FIELD_KEYS["hallazgos"], []) or [])
-    return f"{d}|{h}"
+    return f"{d}|{r}|{h}"
 
 
 def sync_auto_conclusion_if_needed():
@@ -442,8 +429,9 @@ def sync_auto_conclusion_if_needed():
     last_hash = st.session_state.get(FIELD_KEYS["last_auto_hash"], "")
 
     if current_hash != last_hash or not (st.session_state.get(FIELD_KEYS["conclusion"], "").strip()):
-        st.session_state[FIELD_KEYS["conclusion"]] = generate_conclusion_compact(
+        st.session_state[FIELD_KEYS["conclusion"]] = generate_conclusion_short(
             st.session_state.get(FIELD_KEYS["disciplina"], "Otra"),
+            st.session_state.get(FIELD_KEYS["nivel_riesgo"], "Medio"),
             st.session_state.get(FIELD_KEYS["hallazgos"], []),
         )
         st.session_state[FIELD_KEYS["last_auto_hash"]] = current_hash
@@ -529,7 +517,13 @@ def build_pdf(
 
         imgs = []
         for _, b in use:
-            imgs.append(RLImage(_img_cover(b, img_w_mm, img_h_mm), width=img_w_mm * mm, height=img_h_mm * mm))
+            imgs.append(
+                RLImage(
+                    _img_cover(b, img_w_mm, img_h_mm),
+                    width=img_w_mm * mm,
+                    height=img_h_mm * mm,
+                )
+            )
 
         img_table = Table([imgs], colWidths=[img_w_mm * mm] * n)
         img_table.setStyle(
@@ -546,7 +540,11 @@ def build_pdf(
 
     if firma_img:
         story.append(Spacer(1, 8))
-        sig = RLImage(_img_cover(firma_img[1], SIGN_W_MM, SIGN_H_MM), width=SIGN_W_MM * mm, height=SIGN_H_MM * mm)
+        sig = RLImage(
+            _img_cover(firma_img[1], SIGN_W_MM, SIGN_H_MM),
+            width=SIGN_W_MM * mm,
+            height=SIGN_H_MM * mm,
+        )
         story.append(sig)
 
     doc.build(story)
@@ -557,11 +555,6 @@ def build_pdf(
 # Compartir (Web Share API) para móvil
 # -----------------------------
 def render_share_button(pdf_bytes: bytes, filename: str, token: str) -> None:
-    """
-    Botón 'Compartir PDF' usando Web Share API.
-    - En Android (Chrome) abre WhatsApp/Drive/Correo/etc.
-    - En PC si no existe navigator.share, muestra aviso.
-    """
     b64 = base64.b64encode(pdf_bytes).decode("utf-8")
     safe_name = (filename or "informe.pdf").replace('"', "").replace("'", "")
 
@@ -638,7 +631,10 @@ def render_share_button(pdf_bytes: bytes, filename: str, token: str) -> None:
 # -----------------------------
 apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
 
-st.markdown(f"<h1><i>{APP_TITLE}</i></h1><p class='muted'>{APP_SUBTITLE}</p>", unsafe_allow_html=True)
+st.markdown(
+    f"<h1><i>{APP_TITLE}</i></h1><p class='muted'>{APP_SUBTITLE}</p>",
+    unsafe_allow_html=True,
+)
 
 st.radio("Tema", ["Claro", "Oscuro"], horizontal=True, key=FIELD_KEYS["theme"])
 apply_theme_css(st.session_state[FIELD_KEYS["theme"]])
@@ -659,6 +655,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 # Formulario
 st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+
 cL, cR = st.columns(2)
 with cL:
     st.text_input("Fecha", key=FIELD_KEYS["fecha"])
@@ -675,7 +672,6 @@ with cB:
     st.text_input("Ubicación", key=FIELD_KEYS["ubicacion"])
     st.text_input("Cargo", key=FIELD_KEYS["cargo"])
 
-# Advertencia NO bloqueante por capitalización rara en Inspector
 _ins = st.session_state.get(FIELD_KEYS["inspector"], "")
 if _has_obvious_caps_issue(_ins):
     sugg = _recommended_title_name(_ins)
@@ -686,7 +682,6 @@ if _has_obvious_caps_issue(_ins):
 
 st.text_input("N° Registro/OT", key=FIELD_KEYS["registro_ot"])
 
-# Hallazgos (placeholder en español si la versión lo soporta)
 try:
     st.multiselect(
         "Hallazgos",
@@ -712,11 +707,11 @@ if st.session_state[FIELD_KEYS["show_correccion"]]:
             st.info("Cambios: " + " | ".join(changes))
         else:
             st.info("Sin cambios detectados.")
+
     if st.session_state.get(FIELD_KEYS["obs_fixed_preview"], "").strip():
         st.text_area("Sugerencia", key=FIELD_KEYS["obs_fixed_preview"], height=90)
         st.button("Aplicar sugerencias", on_click=apply_obs_fix)
 
-# Auto / Manual
 st.checkbox("Auto", key=FIELD_KEYS["auto_conclusion"])
 sync_auto_conclusion_if_needed()
 
@@ -760,15 +755,4 @@ if st.button("Generar PDF Profesional ✅", use_container_width=True):
     datos = {
         "titulo": st.session_state[FIELD_KEYS["titulo"]],
         "fecha": st.session_state[FIELD_KEYS["fecha"]],
-        "disciplina": st.session_state[FIELD_KEYS["disciplina"]],
-        "equipo": st.session_state[FIELD_KEYS["equipo"]],
-        "ubicacion": st.session_state[FIELD_KEYS["ubicacion"]],
-        "inspector": st.session_state[FIELD_KEYS["inspector"]],
-        "cargo": st.session_state[FIELD_KEYS["cargo"]],
-        "registro_ot": st.session_state[FIELD_KEYS["registro_ot"]],
-        "nivel_riesgo": st.session_state[FIELD_KEYS["nivel_riesgo"]],
-        "observaciones": st.session_state[FIELD_KEYS["observaciones_raw"]],
-        "conclusion": st.session_state[FIELD_KEYS["conclusion"]],
-    }
-
-    pdf_output = build_pdf(datos
+        "disciplina": st.session_state
