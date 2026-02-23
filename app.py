@@ -411,14 +411,132 @@ def apply_obs_fix():
 
 
 # -----------------------------
-# Auto-conclusión (corta, no redundante, tipo informe)
+# Auto-conclusión (prioriza Observaciones por FRASES EXACTAS)
 # -----------------------------
-def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: List[str]) -> str:
-    d = (disciplina or "Otra").strip()
-    r = (nivel_riesgo or "Medio").strip()
-    hs = [h.strip() for h in (hallazgos or []) if (h or "").strip()]
+def _normalize_for_exact_phrase_match(s: str) -> str:
+    """
+    Normaliza para comparar 'frases exactas' de forma estable:
+    - minúsculas
+    - espacios colapsados
+    - sin tildes
+    """
+    s = normalize_spaces(s or "").lower()
+    s = strip_accents(s)
+    return s
 
-    # "riesgo eléctrico medio" (como tu ejemplo)
+
+# Frases EXACTAS (cortas) -> NO se repiten textual en la conclusión (se paraphrasea)
+PHRASE_RULES = [
+    # --- Eléctrico
+    {
+        "phrase": "luminaria suelta",
+        "disc": ["Eléctrica", "Otra"],
+        "cause": "sujeción deficiente en elemento de iluminación",
+        "action": "asegurar fijación del punto de iluminación",
+        "priority": 10,
+    },
+    {
+        "phrase": "polvo conductor",
+        "disc": ["Eléctrica", "Otra"],
+        "cause": "presencia de contaminación conductiva en el área",
+        "action": "ejecutar limpieza y control de contaminación conductiva",
+        "priority": 9,
+    },
+    {
+        "phrase": "tablero sin tapa",
+        "disc": ["Eléctrica", "Otra"],
+        "cause": "gabinete eléctrico con barreras de protección incompletas",
+        "action": "normalizar gabinete y restituir barreras de protección",
+        "priority": 10,
+    },
+    {
+        "phrase": "cable expuesto",
+        "disc": ["Eléctrica", "Instrumental", "Otra"],
+        "cause": "conductor/cableado sin protección adecuada",
+        "action": "aislar, encauzar y proteger cableado según estándar",
+        "priority": 10,
+    },
+    {
+        "phrase": "sin loto",
+        "disc": ["Eléctrica", "Mecánica", "Instrumental", "Civil", "Otra"],
+        "cause": "ausencia de control de energías previo a intervención",
+        "action": "implementar y verificar control LOTO antes de intervenir",
+        "priority": 11,
+    },
+    {
+        "phrase": "falta loto",
+        "disc": ["Eléctrica", "Mecánica", "Instrumental", "Civil", "Otra"],
+        "cause": "ausencia de control de energías previo a intervención",
+        "action": "implementar y verificar control LOTO antes de intervenir",
+        "priority": 11,
+    },
+
+    # --- Mecánico
+    {
+        "phrase": "fuga de aceite",
+        "disc": ["Mecánica", "Otra"],
+        "cause": "pérdida de fluido por condición de estanqueidad deficiente",
+        "action": "corregir estanqueidad y verificar ausencia de fugas",
+        "priority": 10,
+    },
+    {
+        "phrase": "guarda faltante",
+        "disc": ["Mecánica", "Otra"],
+        "cause": "resguardo de partes móviles incompleto",
+        "action": "restituir resguardo y asegurar integridad de protecciones",
+        "priority": 10,
+    },
+
+    # --- Instrumental
+    {
+        "phrase": "señal inestable",
+        "disc": ["Instrumental", "Otra"],
+        "cause": "variación anómala de señal por condición de conexión/calibración",
+        "action": "verificar conexiones, calibrar y normalizar señal de proceso",
+        "priority": 9,
+    },
+
+    # --- Civil
+    {
+        "phrase": "baranda suelta",
+        "disc": ["Civil", "Otra"],
+        "cause": "elemento de protección colectiva con fijación deficiente",
+        "action": "asegurar y reforzar fijación de protección colectiva",
+        "priority": 10,
+    },
+    {
+        "phrase": "piso resbaladizo",
+        "disc": ["Civil", "Otra"],
+        "cause": "superficie con condición que favorece deslizamiento",
+        "action": "normalizar condición de piso y señalizar hasta corregir",
+        "priority": 9,
+    },
+]
+
+
+def _match_phrases_from_observations(obs_text: str, disciplina: str) -> List[dict]:
+    """
+    Encuentra frases EXACTAS (en texto normalizado) y devuelve reglas ordenadas por prioridad.
+    """
+    obs_n = _normalize_for_exact_phrase_match(obs_text)
+    d = (disciplina or "Otra").strip()
+
+    hits = []
+    for r in PHRASE_RULES:
+        phrase_n = _normalize_for_exact_phrase_match(r["phrase"])
+        if phrase_n and phrase_n in obs_n:
+            if d in r.get("disc", ["Otra"]) or "Otra" in r.get("disc", []):
+                hits.append(r)
+
+    hits.sort(key=lambda x: int(x.get("priority", 0)), reverse=True)
+    return hits
+
+
+def _risk_text(disciplina: str, nivel: str) -> str:
+    d = (disciplina or "Otra").strip()
+    r = (nivel or "Medio").strip()
+    nivel_txt = {"Bajo": "bajo", "Medio": "medio", "Alto": "alto"}.get(r, "medio")
+
     adj = {
         "Eléctrica": "eléctrico",
         "Mecánica": "mecánico",
@@ -427,33 +545,43 @@ def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: Lis
         "Otra": "",
     }.get(d, "")
 
-    nivel_txt = {"Bajo": "bajo", "Medio": "medio", "Alto": "alto"}.get(r, "medio")
-    riesgo_txt = f"riesgo {adj} {nivel_txt}".strip()
+    return f"riesgo {adj} {nivel_txt}".strip()
 
-    prevent_txt = {
+
+def _prevent_text(nivel: str) -> str:
+    r = (nivel or "Medio").strip()
+    return {
         "Alto": "para prevenir accidentes y daño a equipos",
         "Medio": "para prevenir contacto accidental y fallas operacionales",
         "Bajo": "para mantener condiciones seguras de operación",
     }.get(r, "para prevenir contacto accidental y fallas operacionales")
 
-    # Prioridad de hallazgos (dominantes primero)
-    priority = ["LOTO", "Tableros", "Condición insegura", "Orden y limpieza", "Otros"]
 
-    # Causa/Acción por hallazgo (solo 1 línea cada una)
+def _fallback_conclusion_by_hallazgos(disciplina: str, nivel_riesgo: str, hallazgos: List[str]) -> str:
+    """
+    Respaldo corto y no redundante (máx 2 causas/2 acciones) basado en Hallazgos.
+    """
+    d = (disciplina or "Otra").strip()
+    r = (nivel_riesgo or "Medio").strip()
+    hs = [h.strip() for h in (hallazgos or []) if (h or "").strip()]
+
+    riesgo_txt = _risk_text(d, r)
+    prevent_txt = _prevent_text(r)
+
+    priority = ["LOTO", "Tableros", "Condición insegura", "Orden y limpieza", "Otros"]
     rule = {
-        "LOTO": ("ausencia de control LOTO", "implementar y verificar control LOTO previo a intervención"),
-        "Tableros": ("deficiencias en tableros/protecciones", "normalizar tableros y asegurar protecciones/rotulación"),
-        "Condición insegura": ("condición insegura en el área/equipo", "corregir condición insegura y asegurar control de riesgos"),
-        "Orden y limpieza": ("deficiencias de orden y limpieza", "realizar limpieza y control de polvo/material conductor"),
-        "Otros": ("hallazgos relevantes en terreno", "corregir hallazgos detectados según criticidad"),
+        "LOTO": ("ausencia de control de energías previo a intervención", "implementar y verificar control LOTO antes de intervenir"),
+        "Tableros": ("condición deficiente en tableros/protecciones", "normalizar tableros y asegurar protecciones/rotulación"),
+        "Condición insegura": ("condición insegura presente en el área/equipo", "corregir condición insegura y asegurar control de riesgos"),
+        "Orden y limpieza": ("condiciones deficientes de orden y limpieza", "ejecutar limpieza y control de material/polvo"),
+        "Otros": ("hallazgos relevantes detectados", "corregir hallazgos según criticidad"),
     }
 
-    # Si no hay hallazgos seleccionados, cae a base por disciplina (una sola causa/acción)
     base_by_disc = {
-        "Eléctrica": ("deficiencias en instalaciones eléctricas", "normalizar instalaciones y ejecutar limpieza/control de polvo conductor"),
-        "Mecánica": ("deficiencias en elementos mecánicos", "normalizar resguardos y corregir condiciones mecánicas"),
-        "Instrumental": ("deficiencias en instrumentación/señales", "verificar, calibrar y normalizar instrumentación/señales"),
-        "Civil": ("deficiencias en infraestructura", "reparar/asegurar infraestructura y mejorar condiciones del área"),
+        "Eléctrica": ("condición deficiente en instalaciones eléctricas", "normalizar instalaciones y ejecutar limpieza/control del área"),
+        "Mecánica": ("condición deficiente en elementos mecánicos", "normalizar resguardos y corregir condición mecánica"),
+        "Instrumental": ("condición deficiente en instrumentación/señales", "verificar, calibrar y normalizar instrumentación/señales"),
+        "Civil": ("condición deficiente en infraestructura", "reparar/asegurar infraestructura y mejorar condición del área"),
         "Otra": ("condiciones deficientes detectadas", "corregir condiciones detectadas y normalizar el área"),
     }
 
@@ -461,11 +589,9 @@ def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: Lis
         cause, action = base_by_disc.get(d, base_by_disc["Otra"])
         return f"Se determina {riesgo_txt} debido a {cause}. Se requiere {action} {prevent_txt}."
 
-    # Arma causas/acciones dominantes, sin repetir y limitado (2 y 2)
-    selected_causes = []
-    selected_actions = []
-
+    selected_causes, selected_actions = [], []
     hs_set = set(hs)
+
     for p in priority:
         if p in hs_set:
             c, a = rule[p]
@@ -476,24 +602,63 @@ def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: Lis
         if len(selected_causes) >= 2 and len(selected_actions) >= 2:
             break
 
-    # Seguridad: nunca vacío
     if not selected_causes:
         selected_causes = [base_by_disc.get(d, base_by_disc["Otra"])[0]]
     if not selected_actions:
         selected_actions = [base_by_disc.get(d, base_by_disc["Otra"])[1]]
 
-    # Formato final (2 frases, sin redundancia)
     cause_txt = " y ".join(selected_causes[:2])
     action_txt = " y ".join(selected_actions[:2])
-
     return f"Se determina {riesgo_txt} debido a {cause_txt}. Se requiere {action_txt} {prevent_txt}."
+
+
+def generate_conclusion_short(disciplina: str, nivel_riesgo: str, hallazgos: List[str], observaciones: str) -> str:
+    """
+    1) Prioriza Observaciones con frases EXACTAS (cortas).
+       - NO repite esas frases textual: usa cause/action paraphraseadas.
+       - Toma máximo 2 reglas.
+    2) Si no hay match, cae a respaldo por Hallazgos (corto).
+    """
+    d = (disciplina or "Otra").strip()
+    r = (nivel_riesgo or "Medio").strip()
+    obs = (observaciones or "").strip()
+
+    riesgo_txt = _risk_text(d, r)
+    prevent_txt = _prevent_text(r)
+
+    if obs:
+        hits = _match_phrases_from_observations(obs, d)
+        if hits:
+            # toma máximo 2, sin repetir cause/action
+            causes, actions = [], []
+            for h in hits:
+                c = (h.get("cause") or "").strip()
+                a = (h.get("action") or "").strip()
+                if c and c not in causes:
+                    causes.append(c)
+                if a and a not in actions:
+                    actions.append(a)
+                if len(causes) >= 2 and len(actions) >= 2:
+                    break
+
+            # seguridad
+            if not causes or not actions:
+                return _fallback_conclusion_by_hallazgos(d, r, hallazgos)
+
+            cause_txt = " y ".join(causes[:2])
+            action_txt = " y ".join(actions[:2])
+
+            return f"Se determina {riesgo_txt} debido a {cause_txt}. Se requiere {action_txt} {prevent_txt}."
+
+    return _fallback_conclusion_by_hallazgos(d, r, hallazgos)
 
 
 def compute_auto_hash() -> str:
     d = st.session_state.get(FIELD_KEYS["disciplina"], "")
     r = st.session_state.get(FIELD_KEYS["nivel_riesgo"], "")
     h = ",".join(st.session_state.get(FIELD_KEYS["hallazgos"], []) or [])
-    return f"{d}|{r}|{h}"
+    o = normalize_spaces(st.session_state.get(FIELD_KEYS["observaciones_raw"], "") or "")
+    return f"{d}|{r}|{h}|{o}"
 
 
 def sync_auto_conclusion_force():
@@ -509,6 +674,7 @@ def sync_auto_conclusion_force():
         st.session_state.get(FIELD_KEYS["disciplina"], "Otra"),
         st.session_state.get(FIELD_KEYS["nivel_riesgo"], "Medio"),
         st.session_state.get(FIELD_KEYS["hallazgos"], []),
+        st.session_state.get(FIELD_KEYS["observaciones_raw"], ""),
     )
     st.session_state[FIELD_KEYS["last_auto_hash"]] = compute_auto_hash()
 
@@ -521,11 +687,6 @@ def _img_cover(file_bytes: bytes, w_mm: float, h_mm: float) -> io.BytesIO:
     box_px_w = 1500
     box_px_h = max(1, int(box_px_w * (h_mm / w_mm)))
 
-    scale = max(box_px_w / img.width, box_px_h / img.height)
-    img = img.resize((int(img.width * scale), int(box_px_h * 1.0)), Image.Resampling.LANCZOS)
-
-    # re-check aspect safely by doing a proper resize-crop
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
     scale = max(box_px_w / img.width, box_px_h / img.height)
     img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
 
