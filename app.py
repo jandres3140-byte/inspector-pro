@@ -14,7 +14,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak
 
 from PIL import Image, ImageOps
 from xml.sax.saxutils import escape
@@ -263,6 +263,9 @@ def apply_theme_css(theme: str) -> None:
         div[data-testid="stFileUploader"] button * {{ color: {btn_text} !important; }}
 
         div[role="radiogroup"] * {{ color: {fg} !important; }}
+
+        /* Evitar “botón vacío raro” (espacios extra) */
+        div[data-testid="stButton"] {{ margin-top: 0.25rem; }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -356,7 +359,6 @@ TECH_WORDS = {
     "medicion": "medición",   # ✅ tu caso
     "epp": "EPP",
 }
-
 TECH_MAP = {strip_accents(k).lower(): v for k, v in TECH_WORDS.items()}
 
 
@@ -412,16 +414,13 @@ def _contains_any(text: str, words: List[str]) -> bool:
 
 
 def generate_conclusion_compact(disciplina: str, nivel_riesgo: str, hallazgos: List[str], observaciones: str) -> str:
-    # NOTA: por decisión tuya, NO repetimos el nivel de riesgo aquí (ya está en tabla).
     disc = (disciplina or "Otra").strip()
     obs = observaciones or ""
     hall = hallazgos or []
 
-    # Causa (1 frase)
     causas = []
 
-    # Electricidad
-    if disc.lower().startswith("eléctr"):
+    if disc.lower().startswith("eléctr") or disc.lower().startswith("electr"):
         if _contains_any(obs, ["tablero", "tableros", "gabinete", "panel"]):
             causas.append("condición deficiente en tableros/gabinetes")
         if _contains_any(obs, ["loto", "bloqueo", "etiquetado"]):
@@ -439,7 +438,6 @@ def generate_conclusion_compact(disciplina: str, nivel_riesgo: str, hallazgos: L
         if _contains_any(obs, ["tablero", "tableros", "gabinete", "panel"]) or ("Tableros" in hall):
             accion = accion + " en tableros/gabinetes"
 
-    # Mecánica
     elif disc.lower().startswith("mec"):
         if _contains_any(obs, ["guardas", "proteccion", "protección"]):
             causas.append("protecciones/guardas deficientes")
@@ -449,7 +447,6 @@ def generate_conclusion_compact(disciplina: str, nivel_riesgo: str, hallazgos: L
             causas.append("condiciones mecánicas observadas")
         accion = "Corregir según prioridad"
 
-    # Instrumental / Instrumentación
     elif disc.lower().startswith("instr"):
         if _contains_any(obs, ["medicion", "medición", "calibr", "señal", "sensor"]):
             causas.append("condición de medición/control a verificar")
@@ -457,7 +454,6 @@ def generate_conclusion_compact(disciplina: str, nivel_riesgo: str, hallazgos: L
             causas.append("condiciones de instrumentación observadas")
         accion = "Verificar y corregir según prioridad"
 
-    # Civil / Otra
     else:
         if not causas and hall:
             causas.append("condiciones observadas")
@@ -467,7 +463,6 @@ def generate_conclusion_compact(disciplina: str, nivel_riesgo: str, hallazgos: L
     frase1 = f"Se identifican {causa_txt}."
     frase2 = f"{accion}."
 
-    # Compactar por si se va largo (para evitar segunda hoja)
     out = f"{frase1} {frase2}"
     out = re.sub(r"\s+", " ", out).strip()
     if len(out) > 260:
@@ -495,6 +490,318 @@ def sync_auto_conclusion_if_needed():
 
 
 # -----------------------------
-# Imágenes (COVER)
+# Imágenes (COVER) + utilidades
 # -----------------------------
-def _img_cover(file_bytes: bytes, w_mm: float, h_mm: float
+def _safe_filename(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"[^\w\s\-\.]", "", s, flags=re.UNICODE)
+    s = s.replace(" ", "_")
+    return s[:80] if s else "informe"
+
+
+def _mm_to_px(mm_value: float, dpi: int = 300) -> int:
+    return max(1, int(round((mm_value / 25.4) * dpi)))
+
+
+def _img_cover(file_bytes: bytes, w_mm: float, h_mm: float) -> RLImage:
+    """
+    Genera una imagen “cover” (recorte centrado) para llenar exactamente w_mm × h_mm.
+    Retorna RLImage listo para ReportLab.
+    """
+    if not file_bytes:
+        raise ValueError("Imagen vacía")
+
+    with Image.open(io.BytesIO(file_bytes)) as im:
+        im = ImageOps.exif_transpose(im).convert("RGB")
+        target_w_px = _mm_to_px(w_mm, dpi=300)
+        target_h_px = _mm_to_px(h_mm, dpi=300)
+        fitted = ImageOps.fit(im, (target_w_px, target_h_px), method=Image.LANCZOS, centering=(0.5, 0.5))
+
+        bio = io.BytesIO()
+        fitted.save(bio, format="JPEG", quality=88, optimize=True)
+        bio.seek(0)
+
+    rl = RLImage(bio, width=w_mm * mm, height=h_mm * mm)
+    return rl
+
+
+def _safe_paragraph(text: str) -> Paragraph:
+    text = normalize_spaces(text or "")
+    text = escape(text).replace("\n", "<br/>")
+    styles = getSampleStyleSheet()
+    p = Paragraph(text if text else "&nbsp;", styles["BodyText"])
+    return p
+
+
+def _section_title(text: str) -> Paragraph:
+    styles = getSampleStyleSheet()
+    t = escape((text or "").strip())
+    return Paragraph(f"<b>{t}</b>", styles["Heading4"])
+
+
+def _kv_table(rows: List[Tuple[str, str]]) -> Table:
+    data = []
+    for k, v in rows:
+        data.append([f"<b>{escape(k)}</b>", escape(v or "")])
+    styles = getSampleStyleSheet()
+    t = Table(
+        [[Paragraph(a, styles["BodyText"]), Paragraph(b, styles["BodyText"])] for a, b in data],
+        colWidths=[45 * mm, 135 * mm],
+    )
+    t.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (-1, -1), 0.6, colors.black),
+                ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    return t
+
+
+def _chips_table(title: str, items: List[str]) -> Optional[Table]:
+    items = [x.strip() for x in (items or []) if x and x.strip()]
+    if not items:
+        return None
+
+    styles = getSampleStyleSheet()
+    chips = []
+    for it in items:
+        chips.append(Paragraph(f"• {escape(it)}", styles["BodyText"]))
+
+    t = Table([[Paragraph(f"<b>{escape(title)}</b>", styles["BodyText"])], chips], colWidths=[180 * mm])
+    t.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (-1, -1), 0.6, colors.black),
+                ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    return t
+
+
+def build_pdf(
+    *,
+    titulo: str,
+    fecha: str,
+    disciplina: str,
+    equipo: str,
+    ubicacion: str,
+    inspector: str,
+    cargo: str,
+    registro_ot: str,
+    nivel_riesgo: str,
+    hallazgos: List[str],
+    observaciones: str,
+    conclusion: str,
+    photos: List[bytes],
+    signature: Optional[bytes],
+) -> bytes:
+    buff = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buff,
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
+        title=titulo or "Informe",
+        author=inspector or "",
+    )
+
+    styles = getSampleStyleSheet()
+    story = []
+
+    story.append(Paragraph(f"<b>{escape(titulo or 'Informe Técnico de Inspección')}</b>", styles["Title"]))
+    story.append(Spacer(1, 4 * mm))
+    story.append(Paragraph(f"<i>Fecha:</i> {escape(fecha or '')}", styles["BodyText"]))
+    story.append(Spacer(1, 3 * mm))
+
+    info = _kv_table(
+        [
+            ("Disciplina", disciplina or ""),
+            ("Equipo", equipo or ""),
+            ("Ubicación", ubicacion or ""),
+            ("Inspector", inspector or ""),
+            ("Cargo", cargo or ""),
+            ("Registro OT", registro_ot or ""),
+            ("Nivel de riesgo", nivel_riesgo or ""),
+        ]
+    )
+    story.append(info)
+    story.append(Spacer(1, 4 * mm))
+
+    ht = _chips_table("Hallazgos", hallazgos or [])
+    if ht is not None:
+        story.append(ht)
+        story.append(Spacer(1, 4 * mm))
+
+    story.append(_section_title("Observaciones"))
+    story.append(Spacer(1, 2 * mm))
+    story.append(_safe_paragraph(observaciones or ""))
+    story.append(Spacer(1, 4 * mm))
+
+    story.append(_section_title("Conclusión"))
+    story.append(Spacer(1, 2 * mm))
+    story.append(_safe_paragraph(conclusion or ""))
+    story.append(Spacer(1, 5 * mm))
+
+    # --- Multimedia al final: fotos (bloque total 15x6 cm) + firma (3x3 cm)
+    media_parts = []
+
+    n = len([p for p in (photos or []) if p])
+    if n > 0:
+        # Distribuir ancho total entre N fotos, altura total fija
+        per_w = TOTAL_IMG_W_MM / n
+        per_h = TOTAL_IMG_H_MM
+
+        imgs = []
+        for p in photos[:3]:
+            if not p:
+                continue
+            imgs.append(_img_cover(p, per_w, per_h))
+
+        if imgs:
+            row = imgs
+            t = Table([row], colWidths=[per_w * mm] * len(row), rowHeights=[per_h * mm])
+            t.setStyle(
+                TableStyle(
+                    [
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                        ("TOPPADDING", (0, 0), (-1, -1), 0),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                        ("BOX", (0, 0), (-1, -1), 0.6, colors.black),
+                    ]
+                )
+            )
+            media_parts.append(_section_title("Registro fotográfico"))
+            media_parts.append(Spacer(1, 2 * mm))
+            media_parts.append(t)
+            media_parts.append(Spacer(1, 3 * mm))
+
+    if signature:
+        sig = _img_cover(signature, SIGN_W_MM, SIGN_H_MM)
+        sig_tbl = Table([[sig]], colWidths=[SIGN_W_MM * mm], rowHeights=[SIGN_H_MM * mm])
+        sig_tbl.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ("BOX", (0, 0), (-1, -1), 0.6, colors.black),
+                ]
+            )
+        )
+        media_parts.append(_section_title("Firma"))
+        media_parts.append(Spacer(1, 2 * mm))
+        media_parts.append(sig_tbl)
+
+    if media_parts:
+        story.append(Spacer(1, 2 * mm))
+        story.extend(media_parts)
+
+    doc.build(story)
+    pdf_bytes = buff.getvalue()
+    buff.close()
+    return pdf_bytes
+
+
+# -----------------------------
+# UI
+# -----------------------------
+apply_theme_css(st.session_state.get(FIELD_KEYS["theme"], "Claro"))
+
+st.markdown(f"<div class='app-card'><h2 style='margin:0'>{APP_TITLE}</h2><div class='muted'>{APP_SUBTITLE}</div></div>", unsafe_allow_html=True)
+
+# Header controls
+c1, c2, c3 = st.columns([1.2, 1.0, 1.1])
+with c1:
+    theme = st.selectbox(
+        "Tema",
+        ["Claro", "Oscuro"],
+        index=0 if st.session_state[FIELD_KEYS["theme"]] == "Claro" else 1,
+        key=FIELD_KEYS["theme"],
+    )
+with c2:
+    st.toggle("Auto-conclusión", key=FIELD_KEYS["auto_conclusion"])
+with c3:
+    st.toggle("Mostrar corrección", key=FIELD_KEYS["show_correccion"])
+
+apply_theme_css(st.session_state.get(FIELD_KEYS["theme"], "Claro"))
+
+# Acciones rápidas
+a1, a2, a3 = st.columns([1.2, 1.0, 1.0])
+with a1:
+    st.toggle("Incluir fotos", key=FIELD_KEYS["include_photos"])
+with a2:
+    st.toggle("Incluir firma", key=FIELD_KEYS["include_signature"])
+with a3:
+    if st.button("Limpiar formulario", use_container_width=True):
+        hard_reset_now()
+
+st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+
+# Datos
+d1, d2 = st.columns([1, 1])
+with d1:
+    st.text_input("Fecha", key=FIELD_KEYS["fecha"])
+    st.text_input("Título", key=FIELD_KEYS["titulo"])
+    st.selectbox("Disciplina", ["Eléctrica", "Mecánica", "Instrumentación", "Civil", "Otra"], key=FIELD_KEYS["disciplina"])
+with d2:
+    st.text_input("Equipo", key=FIELD_KEYS["equipo"])
+    st.text_input("Ubicación", key=FIELD_KEYS["ubicacion"])
+    st.text_input("Registro OT", key=FIELD_KEYS["registro_ot"])
+
+d3, d4 = st.columns([1, 1])
+with d3:
+    st.text_input("Inspector", key=FIELD_KEYS["inspector"])
+    if _has_obvious_caps_issue(st.session_state.get(FIELD_KEYS["inspector"], "")):
+        rec = _recommended_title_name(st.session_state.get(FIELD_KEYS["inspector"], ""))
+        st.caption(f"Sugerencia (no obliga): {rec}")
+with d4:
+    st.text_input("Cargo", key=FIELD_KEYS["cargo"])
+    st.selectbox("Nivel de riesgo", ["Bajo", "Medio", "Alto", "Crítico"], key=FIELD_KEYS["nivel_riesgo"])
+
+# Hallazgos
+st.multiselect(
+    "Hallazgos (selecciona lo que aplique)",
+    ["Orden y limpieza", "Tableros", "LOTO", "Protecciones", "Señalización", "Iluminación", "Instrumentación", "EPP", "Otros"],
+    key=FIELD_KEYS["hallazgos"],
+)
+
+# Observaciones + corrección
+st.text_area("Observaciones", key=FIELD_KEYS["observaciones_raw"], height=170, placeholder="Describe hallazgos, condición, ubicación exacta, etc.")
+
+if st.session_state.get(FIELD_KEYS["show_correccion"], True):
+    b1, b2 = st.columns([1, 1])
+    with b1:
+        if st.button("Corrección técnica (solo Observaciones)", use_container_width=True):
+            fixed, logs = technical_spanish_fixes(st.session_state.get(FIELD_KEYS["observaciones_raw"], ""))
+            st.session_state[FIELD_KEYS["obs_fixed_preview"]] = fixed
+            if logs:
+                st.caption("Cambios: " + " | ".join(logs))
+            else:
+                st.caption("Sin cambios detectados.")
+    with b2:
+        if st.button("Aplicar corrección", use_container_width=True):
+            apply_obs_fix()
+
+    if (st.session_state.get(FIELD_KEYS["obs_fixed_preview"], "") or "").strip():
+        st.text_area("Vista previa corregida", key=FIELD_KEYS["obs_fixed_preview"],
