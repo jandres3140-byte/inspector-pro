@@ -10,7 +10,8 @@ source.include_exts = py,png,jpg,jpeg,kv,ttf
 version = 0.1
 
 # ✅ Dependencias reales (PDF + imágenes + selector + compartir + storage)
-requirements = python3,kivy,reportlab,Pillow,plyer,androidstorage4kivy
+# 🔥 Fix: forzar Python 3.10 para evitar fallo de compilación reportlab (_rl_accel.c) en p4a/NDK
+requirements = python3==3.10.12,kivy,reportlab,Pillow,plyer,androidstorage4kivy
 
 # ✅ Archivo principal Kivy
 entrypoint = main.py
