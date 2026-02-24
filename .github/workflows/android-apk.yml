@@ -10,9 +10,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    defaults:
-      run:
-        working-directory: android
 
     steps:
       - name: Checkout
@@ -34,7 +31,7 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            git zip unzip \
+            git zip unzip curl \
             autoconf automake libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             libtinfo5 cmake libffi-dev libssl-dev \
@@ -59,7 +56,6 @@ jobs:
 
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
-          # Aceptar licencias sin que falle por "Broken pipe" con pipefail
           set +o pipefail
           yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
           set -o pipefail
@@ -93,17 +89,16 @@ jobs:
       - name: Generate keystore (for release signing)
         run: |
           set -euxo pipefail
-          # OJO: aquí ya estamos dentro de android/
-          if [ ! -f "keystore.jks" ]; then
+          if [ ! -f "android/keystore.jks" ]; then
             keytool -genkeypair -v \
-              -keystore keystore.jks \
+              -keystore android/keystore.jks \
               -storepass jcamp029pro \
               -keypass jcamp029pro \
               -alias jcamp029 \
               -keyalg RSA -keysize 2048 -validity 3650 \
               -dname "CN=jcamp029pro, OU=Dev, O=jcamp029, L=LosAndes, S=Valparaiso, C=CL"
           fi
-          ls -la keystore.jks
+          ls -la android/keystore.jks
 
       - name: Build APK (debug)
         env:
@@ -113,14 +108,15 @@ jobs:
         run: |
           set -euxo pipefail
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-          buildozer -v android debug
+          # ✅ correr buildozer usando el spec dentro de /android
+          buildozer -v -s android/buildozer.spec android debug
 
       - name: List build outputs (apk/aab)
         run: |
           set -euxo pipefail
           echo "PWD=$(pwd)"
-          echo "=== bin/ (direct) ==="
-          ls -la bin || true
+          echo "=== android/bin/ ==="
+          ls -la android/bin || true
           echo "=== find (apk/aab) ==="
           find . -maxdepth 10 \( -name "*.apk" -o -name "*.aab" \) -print || true
 
@@ -129,7 +125,7 @@ jobs:
         with:
           name: jcamp029pro-android-build
           path: |
-            bin/*.apk
-            bin/*.aab
+            android/bin/*.apk
+            android/bin/*.aab
             **/*.apk
             **/*.aab
