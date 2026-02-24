@@ -3,11 +3,17 @@ title = jcamp029.pro
 package.name = jcamp029pro
 package.domain = pro.jcamp029
 
-source.dir = .
-source.include_exts = py
+# ✅ Compila SOLO la app Android (no el Streamlit del root)
+source.dir = android
+source.include_exts = py,png,jpg,jpeg,kv,ttf
+
 version = 0.1
 
-requirements = python3,kivy
+# ✅ Dependencias reales (PDF + imágenes + selector + compartir + storage)
+requirements = python3,kivy,reportlab,Pillow,plyer,androidstorage4kivy
+
+# ✅ Archivo principal Kivy
+entrypoint = main.py
 
 orientation = portrait
 fullscreen = 0
@@ -18,8 +24,8 @@ android.minapi = 21
 android.ndk_api = 21
 android.build_tools_version = 34.0.0
 
-# Forzar SDK del workflow (runner)
-android.sdk_path = /home/runner/android-sdk
+# ✅ NO fijar SDK hardcodeado (en Actions se define ANDROID_SDK_ROOT)
+# android.sdk_path = /home/runner/android-sdk
 
 # Arquitecturas
 android.archs = arm64-v8a, armeabi-v7a
@@ -27,10 +33,13 @@ android.archs = arm64-v8a, armeabi-v7a
 # AndroidX
 android.enable_androidx = True
 
-# Forzar formato de release
+# ✅ Release
 android.release_artifact = apk
 
-# RELEASE SIGNING (la keystore la genera el workflow)
+# ✅ Permisos (fotos + storage)
+android.permissions = READ_MEDIA_IMAGES,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
+
+# RELEASE SIGNING (⚠️ para venta real después lo movemos a secrets)
 android.release_keystore = keystore.jks
 android.release_keyalias = jcamp029
 android.release_keystore_passwd = jcamp029pro
