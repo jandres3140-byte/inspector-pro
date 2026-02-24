@@ -22,6 +22,9 @@ TOTAL_IMG_H_MM = 60
 SIGN_W_MM = 30
 SIGN_H_MM = 30
 
+# ✅ Watermark FREE
+WATERMARK_TEXT = "jcamp029.pro FREE"
+
 
 @dataclass
 class ReportData:
@@ -284,10 +287,28 @@ def _img_cover(file_bytes: bytes, w_mm: float, h_mm: float) -> io.BytesIO:
     return buf
 
 
+# -----------------------------
+# Watermark (FREE) - todas las páginas
+# -----------------------------
+def _draw_watermark(canvas, doc):
+    # Gris suave + diagonal 45°
+    canvas.saveState()
+    canvas.setFont("Helvetica-Bold", 55)
+    canvas.setFillGray(0.90)
+
+    w, h = doc.pagesize
+    canvas.translate(w / 2.0, h / 2.0)
+    canvas.rotate(45)
+    canvas.drawCentredString(0, 0, WATERMARK_TEXT)
+
+    canvas.restoreState()
+
+
 def build_pdf(
     data: ReportData,
     fotos: List[Tuple[str, bytes]],
     firma_img: Optional[Tuple[str, bytes]],
+    free_version: bool = True,  # ✅ FREE por defecto (con watermark)
 ) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, margin=15 * mm)
@@ -361,5 +382,9 @@ def build_pdf(
         sig = RLImage(_img_cover(firma_img[1], SIGN_W_MM, SIGN_H_MM), width=SIGN_W_MM * mm, height=SIGN_H_MM * mm)
         story.append(sig)
 
-    doc.build(story)
+    if free_version:
+        doc.build(story, onFirstPage=_draw_watermark, onLaterPages=_draw_watermark)
+    else:
+        doc.build(story)
+
     return buffer.getvalue()
