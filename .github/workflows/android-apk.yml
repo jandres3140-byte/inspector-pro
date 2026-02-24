@@ -108,8 +108,8 @@ jobs:
         run: |
           set -euxo pipefail
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-          # ✅ correr buildozer usando el spec dentro de /android
-          buildozer -v -s android/buildozer.spec android debug
+          cd android
+          buildozer -v android debug
 
       - name: List build outputs (apk/aab)
         run: |
