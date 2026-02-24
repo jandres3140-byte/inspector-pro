@@ -1,47 +1,278 @@
-[app]
-title = jcamp029.pro
-package.name = jcamp029pro
-package.domain = pro.jcamp029
+import io
+import os
+import re
+import tempfile
+from dataclasses import dataclass
+from datetime import datetime
+from typing import List, Optional, Tuple
 
-# Compila SOLO la app Android (no Streamlit del root)
-source.dir = android
-source.include_exts = py,png,jpg,jpeg,kv,ttf
+from PIL import Image as PILImage, ImageOps
 
-version = 0.1
-
-# Dependencias
-requirements = python3,kivy,reportlab,Pillow,plyer,androidstorage4kivy
-
-# Archivo principal Kivy
-entrypoint = main.py
-
-orientation = portrait
-fullscreen = 0
-
-# ANDROID (estable para p4a/CI)
-android.minapi = 21
-android.api = 33
-android.build_tools_version = 33.0.2
-
-# SOLO una arquitectura mientras depuramos (evita duplicar errores y logs gigantes)
-android.archs = arm64-v8a
-
-# AndroidX
-android.enable_androidx = True
-
-# Release artifact
-android.release_artifact = apk
-
-# Permisos (Android 13+ usa READ_MEDIA_IMAGES; los legacy se mantienen por compatibilidad)
-android.permissions = READ_MEDIA_IMAGES,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
-
-# RELEASE SIGNING (para producción real: mover a Secrets)
-android.release_keystore = keystore.jks
-android.release_keyalias = jcamp029
-android.release_keystore_passwd = jcamp029pro
-android.release_keyalias_passwd = jcamp029pro
+from fpdf import FPDF
 
 
-[buildozer]
-log_level = 2
-warn_on_root = 1
+# -----------------------------
+# Datos
+# -----------------------------
+@dataclass
+class ReportData:
+    titulo: str
+    fecha: str
+    disciplina: str
+    equipo: str
+    ubicacion: str
+    inspector: str
+    cargo: str
+    registro_ot: str
+    nivel_riesgo: str
+    hallazgos: List[str]
+    observaciones: str
+    conclusion: str
+
+
+# -----------------------------
+# Utilidades texto
+# -----------------------------
+_COMMON_FIXES = [
+    (r"\bq\b", "que"),
+    (r"\bxq\b", "porque"),
+    (r"\bporq\b", "porque"),
+    (r"\bde el\b", "del"),
+    (r"\ba el\b", "al"),
+]
+
+def _clean_spaces(text: str) -> str:
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+def technical_spanish_fixes(text: str):
+    """Devuelve (texto_corregido, cambios[]) - simple y estable offline."""
+    original = text or ""
+    out = original
+
+    changes = []
+    out2 = _clean_spaces(out)
+    if out2 != out:
+        changes.append("Espacios/formatos normalizados")
+        out = out2
+
+    for pat, rep in _COMMON_FIXES:
+        new = re.sub(pat, rep, out, flags=re.IGNORECASE)
+        if new != out:
+            changes.append(f"Reemplazo '{pat}'")
+            out = new
+
+    # Mayúscula inicial (solo si hay texto)
+    if out and out[0].islower():
+        out = out[0].upper() + out[1:]
+        changes.append("Mayúscula inicial")
+
+    return out, changes
+
+
+def generate_conclusion_short(disciplina: str, riesgo: str, hallazgos: List[str], observaciones: str) -> str:
+    """Conclusión corta (1-2 frases)."""
+    d = (disciplina or "").strip()
+    r = (riesgo or "").strip()
+    h = [x.strip() for x in (hallazgos or []) if x.strip()]
+
+    # Base breve y directa
+    if h:
+        h_txt = ", ".join(h[:4]) + ("…" if len(h) > 4 else "")
+        base = f"Se determina riesgo {r.lower()} en disciplina {d.lower()} por hallazgos: {h_txt}."
+    else:
+        base = f"Se determina riesgo {r.lower()} en disciplina {d.lower()} según condición observada."
+
+    # Recomendación corta
+    rec = "Se requieren acciones correctivas y verificación en próxima inspección."
+    return f"{base} {rec}".strip()
+
+
+# -----------------------------
+# PDF (fpdf2) - sin C extensions
+# -----------------------------
+# Regla multimedia: entre 1-3 fotos en bloque TOTAL 150x60 mm (15x6 cm)
+TOTAL_IMG_W_MM = 150
+TOTAL_IMG_H_MM = 60
+
+# Firma 3x3 cm
+SIGN_W_MM = 30
+SIGN_H_MM = 30
+
+
+def _tmp_write_image(img_bytes: bytes, suggested_name: str = "img") -> str:
+    """Escribe bytes a archivo temporal y retorna path."""
+    ext = ".jpg"
+    name_lower = (suggested_name or "").lower()
+    if name_lower.endswith(".png"):
+        ext = ".png"
+    elif name_lower.endswith(".jpeg"):
+        ext = ".jpeg"
+    elif name_lower.endswith(".jpg"):
+        ext = ".jpg"
+
+    fd, path = tempfile.mkstemp(prefix="jcamp029_", suffix=ext)
+    os.close(fd)
+    with open(path, "wb") as f:
+        f.write(img_bytes)
+    return path
+
+
+def _img_size_px(img_bytes: bytes) -> Tuple[int, int]:
+    with io.BytesIO(img_bytes) as bio:
+        im = PILImage.open(bio)
+        im = ImageOps.exif_transpose(im)
+        return im.size  # (w, h)
+
+
+def _fit_box(orig_w: float, orig_h: float, box_w: float, box_h: float) -> Tuple[float, float]:
+    """Escala preservando proporción para encajar en box."""
+    if orig_w <= 0 or orig_h <= 0:
+        return box_w, box_h
+    scale = min(box_w / orig_w, box_h / orig_h)
+    return orig_w * scale, orig_h * scale
+
+
+class _PDF(FPDF):
+    pass
+
+
+def build_pdf(data: ReportData,
+              fotos: List[Tuple[str, bytes]],
+              firma: Optional[Tuple[str, bytes]]) -> bytes:
+
+    pdf = _PDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+
+    # Fuentes básicas (core)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.multi_cell(0, 8, data.titulo or "Informe")
+    pdf.ln(1)
+
+    pdf.set_font("Helvetica", "", 10)
+
+    def row(label: str, value: str):
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(40, 6, f"{label}:", 0, 0)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.multi_cell(0, 6, value or "-")
+
+    row("Fecha", data.fecha)
+    row("Disciplina", data.disciplina)
+    row("Riesgo", data.nivel_riesgo)
+    row("Equipo/Área", data.equipo)
+    row("Ubicación", data.ubicacion)
+    row("Inspector", data.inspector)
+    row("Cargo", data.cargo)
+    row("N° Registro/OT", data.registro_ot)
+
+    if data.hallazgos:
+        row("Hallazgos", ", ".join(data.hallazgos))
+    else:
+        row("Hallazgos", "-")
+
+    pdf.ln(1)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, "Observaciones", 0, 1)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.multi_cell(0, 5.5, data.observaciones or "-")
+    pdf.ln(1)
+
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, "Conclusión", 0, 1)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.multi_cell(0, 5.5, data.conclusion or "-")
+    pdf.ln(2)
+
+    # -----------------------------
+    # Fotos (bloque total 150x60mm)
+    # -----------------------------
+    fotos = (fotos or [])[:3]
+    if fotos:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 7, "Registro fotográfico", 0, 1)
+        pdf.set_font("Helvetica", "", 9)
+
+        x0 = pdf.get_x()
+        y0 = pdf.get_y()
+
+        # Si no cabe el bloque + algo de margen, saltar de página
+        if y0 + TOTAL_IMG_H_MM + 10 > (pdf.h - pdf.b_margin):
+            pdf.add_page()
+            x0 = pdf.get_x()
+            y0 = pdf.get_y()
+
+        n = len(fotos)
+        slot_w = TOTAL_IMG_W_MM / n
+        slot_h = TOTAL_IMG_H_MM
+
+        # Dibuja cada imagen centrada en su slot
+        for i, (name, bts) in enumerate(fotos):
+            try:
+                iw, ih = _img_size_px(bts)
+                draw_w, draw_h = _fit_box(iw, ih, slot_w, slot_h)
+
+                # top-left del slot
+                sx = x0 + i * slot_w
+                sy = y0
+
+                # centrar dentro del slot
+                px = sx + (slot_w - draw_w) / 2
+                py = sy + (slot_h - draw_h) / 2
+
+                tmp = _tmp_write_image(bts, name)
+                pdf.image(tmp, x=px, y=py, w=draw_w, h=draw_h)
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+            except Exception:
+                # Si una foto falla, la saltamos sin matar el PDF
+                continue
+
+        pdf.set_y(y0 + TOTAL_IMG_H_MM + 3)
+
+    # -----------------------------
+    # Firma (3x3cm)
+    # -----------------------------
+    if firma:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 7, "Firma", 0, 1)
+
+        # Asegurar espacio
+        y = pdf.get_y()
+        if y + SIGN_H_MM + 12 > (pdf.h - pdf.b_margin):
+            pdf.add_page()
+
+        name, bts = firma
+        try:
+            iw, ih = _img_size_px(bts)
+            draw_w, draw_h = _fit_box(iw, ih, SIGN_W_MM, SIGN_H_MM)
+
+            x = pdf.get_x()
+            y = pdf.get_y()
+
+            # centrado en caja 30x30
+            px = x + (SIGN_W_MM - draw_w) / 2
+            py = y + (SIGN_H_MM - draw_h) / 2
+
+            tmp = _tmp_write_image(bts, name)
+            pdf.image(tmp, x=px, y=py, w=draw_w, h=draw_h)
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+            pdf.set_y(y + SIGN_H_MM + 2)
+        except Exception:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 6, "Firma cargada, pero no se pudo insertar como imagen.")
+
+    # Salida a bytes
+    out = pdf.output(dest="S")
+    if isinstance(out, str):
+        return out.encode("latin-1")
+    return bytes(out)
