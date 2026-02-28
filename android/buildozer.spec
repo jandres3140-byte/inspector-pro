@@ -17,14 +17,14 @@ entrypoint = main.py
 orientation = portrait
 fullscreen = 0
 
-# ANDROID
+# ANDROID (más estable para Kivy en equipos reales)
 android.minapi = 21
-android.api = 34
-android.ndk_api = 21
-android.build_tools_version = 34.0.0
+android.api = 33
+android.ndk_api = 23
+# android.build_tools_version = 34.0.0  # (déjalo comentado; que use el del SDK)
 
-# ✅ Incluye 64 y 32 bits (evita crashes por libs/arquitectura)
-android.archs = arm64-v8a, armeabi-v7a
+# ✅ SOLO 64-bit (evita varios crashes sdl2)
+android.archs = arm64-v8a
 
 # ✅ Bootstrap explícito (Kivy)
 p4a.bootstrap = sdl2
@@ -35,10 +35,12 @@ android.enable_androidx = True
 # Artifact
 android.release_artifact = apk
 
-# Permisos (fotos + storage)
-android.permissions = READ_MEDIA_IMAGES,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
+# Permisos (Android 13/14)
+# READ_EXTERNAL_STORAGE y WRITE_EXTERNAL_STORAGE ya no aplican bien en API 33+
+# Con picker/SAF + androidstorage4kivy normalmente basta esto:
+android.permissions = READ_MEDIA_IMAGES
 
-# RELEASE SIGNING (después lo movemos a secrets)
+# RELEASE SIGNING (ideal mover a secrets; por ahora lo dejo igual que tú)
 android.release_keystore = keystore.jks
 android.release_keyalias = jcamp029
 android.release_keystore_passwd = jcamp029pro
