@@ -6,7 +6,7 @@ package.domain = pro.jcamp029
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,ttf
 
-version = 0.1
+version = 0.1.9
 
 requirements = python3,kivy,fpdf2,Pillow,plyer,androidstorage4kivy
 
