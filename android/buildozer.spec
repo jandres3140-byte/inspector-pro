@@ -8,7 +8,7 @@ source.include_exts = py,png,jpg,jpeg,kv,ttf
 
 version = 0.1.9
 
-requirements = python3,kivy,Pillow,plyer
+requirements = python3,kivy,Pillow,plyer,androidstorage4kivy
 
 entrypoint = main.py
 
