@@ -8,7 +8,7 @@ source.include_exts = py,png,jpg,jpeg,kv,ttf
 
 version = 0.1.9
 
-requirements = python3,kivy,fpdf2,Pillow,plyer,androidstorage4kivy
+requirements = python3,kivy,Pillow,plyer
 
 entrypoint = main.py
 
@@ -16,11 +16,11 @@ orientation = portrait
 fullscreen = 0
 
 android.minapi = 23
-android.api = 34
+android.api = 33
 android.ndk_api = 23
-android.build_tools_version = 34.0.0
 
-android.archs = arm64-v8a, armeabi-v7a
+
+android.archs = arm64-v8a
 
 p4a.bootstrap = sdl2
 android.enable_androidx = True
