@@ -116,8 +116,7 @@ class InspectorRoot(BoxLayout):
         self.status = Label(text="Listo.", size_hint_y=None, height=dp(28))
         bar.add_widget(self.status)
 
-        # Storage helper
-        self.shared_storage = SharedStorage()
+       
         self.chooser = Chooser(self.shared_storage)
 
 
