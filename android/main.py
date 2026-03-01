@@ -14,8 +14,8 @@ from kivy.uix.textinput import TextInput
 
 from plyer import filechooser, share
 
-from androidstorage4kivy import SharedStorage, Chooser
-
+self.shared_storage = SharedStorage()
+self.chooser = Chooser(self.shared_storage)
 import core
 
 
