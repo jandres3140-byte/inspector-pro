@@ -26,7 +26,7 @@ p4a.bootstrap = sdl2
 android.enable_androidx = True
 
 # ✅ Para diagnóstico: sin permisos (evita bloqueos raros al inicio)
-android.permissions =
+android.permissions = READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,READ_MEDIA_AUDIO
 
 # ✅ Para diagnóstico: NO firmar release aquí (debug no lo necesita)
 # android.release_keystore = keystore.jks
